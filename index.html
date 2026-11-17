@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agua Viva · Prototipo de demostración</title>
+<title>Agua Viva · Prototipo de gestión integral</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -16,12 +16,12 @@
   .dash{border-top:1px dashed #000;margin:6px 0}
   .fade{animation:fade .25s ease}
   @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-  input:focus,select:focus{outline:none;box-shadow:0 0 0 3px rgba(14,165,233,.35)}
+  input:focus,select:focus,textarea:focus{outline:none;box-shadow:0 0 0 3px rgba(14,165,233,.35)}
+  button:disabled{cursor:not-allowed}
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen">
 
-<!-- Barra de demo: selector de rol -->
 <header class="bg-slate-900 text-white sticky top-0 z-40 shadow">
   <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
     <div class="flex items-center gap-3">
@@ -31,100 +31,160 @@
         <div class="text-xs text-sky-300">Prototipo de demostración · datos ficticios en memoria</div>
       </div>
     </div>
-    <nav class="flex gap-2" id="roleNav"></nav>
+    <nav class="flex flex-wrap gap-2" id="roleNav"></nav>
   </div>
+  <div id="chips" class="bg-slate-800 border-t border-slate-700"></div>
 </header>
 
 <main id="view" class="max-w-7xl mx-auto p-4 sm:p-6"></main>
-
-<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 hidden"></div>
-<div id="modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 items-center justify-center p-4"></div>
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] hidden"></div>
+<div id="modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 items-center justify-center p-4 overflow-y-auto"></div>
 
 <script>
+/* ============================ HELPERS BÁSICOS ============================ */
+const $=s=>document.querySelector(s);
+const round2=n=>Math.round((n+Number.EPSILON)*100)/100;
+const fmt=n=>'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hora=()=>new Date().toLocaleTimeString('es-SV',{hour:'2-digit',minute:'2-digit',hour12:false});
+const fechaFmt=f=>f.split('-').reverse().join('/');
+function toast(msg){const t=$('#toast');t.innerHTML=`<div class="fade bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-medium max-w-sm text-center">${msg}</div>`;t.classList.remove('hidden');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.add('hidden'),3200)}
+function modal(html,wide){const m=$('#modal');m.innerHTML=`<div class="fade bg-white rounded-2xl shadow-2xl w-full ${wide?'max-w-2xl':'max-w-md'} p-6 my-auto">${html}</div>`;m.classList.remove('hidden');m.classList.add('flex')}
+function closeModal(){const m=$('#modal');m.classList.add('hidden');m.classList.remove('flex')}
+
 /* ============================ DATOS FICTICIOS ============================ */
-const PERIODO='2026-11';
+const PERIODO='2026-11',HOY='2026-11-16',SALDO_INI=5200;
 const MESES={'2026-07':'Julio 2026','2026-08':'Agosto 2026','2026-09':'Septiembre 2026','2026-10':'Octubre 2026','2026-11':'Noviembre 2026'};
 const PERIODOS_HIST=['2026-07','2026-08','2026-09','2026-10'];
 const SECTORES=['Centro','El Calvario','San José','La Esperanza'];
+const USERS={fontanero:'W. Pérez (Fontanero)',secretaria:'M. López (Cajera)',tesorero:'C. Ramírez (Tesorero)',admin:'J. Alas (Presidente)'};
+const CATS_EGR=[['Energía eléctrica de bombas','⚡'],['Cloro / insumos químicos','🧪'],['Materiales PVC / fontanería','🔧'],['Salarios / viáticos','👷'],['Mantenimiento','🛠️'],['Otros gastos','📎']];
+const MES_SEED=[['Ene',4120,3480],['Feb',4210,3390],['Mar',4350,3920],['Abr',4280,3510],['May',4390,3640],['Jun',4460,3870],['Jul',4510,3680],['Ago',4620,3790],['Sep',4580,3950],['Oct',4690,3860]].map(([m,ing,egr])=>({m,ing,egr}));
+
+const state={tarifa:{base:3,incl:15,extra:0.4,reconexion:5,acometida:150,traspaso:10,constancia:2},
+  socios:[],acometidas:[],lecturas:{},libro:[],cortes:[],convenios:[],medidores:[],audit:[],instaladosAnio:23,
+  caja:{abierta:true,turno:1,saldoInicial:50,apertura:'07:30'},seq:{libro:0,comp:124,conv:1}};
+const socioMap={},acoMap={},acoBySocio={},recMap={},recById={};
+const calc=(m3,t=state.tarifa)=>{const exM3=Math.max(0,m3-t.incl),exc=round2(exM3*t.extra);return{base:t.base,exM3,exc,total:round2(t.base+exc)}};
+let seed=11;const rnd=()=>(seed=(seed*9301+49297)%233280)/233280;
+const pick=a=>a[Math.floor(rnd()*a.length)];
+
+function addAco(num,idx,nombre,sector,dir,serie,mora,sinHistorial){
+  const id=num+'-'+idx;let acum=sinHistorial?0:1000+Math.floor(rnd()*3500);recMap[id]=[];
+  if(!sinHistorial)PERIODOS_HIST.forEach((p,k)=>{const m3=Math.round(7+rnd()*(id==='219-2'?30:20));acum+=m3;
+    const r={id:id+'|'+p,aco:id,periodo:p,m3,monto:calc(m3).total,pagado:k<PERIODOS_HIST.length-mora,fechaPago:null,conv:null};recMap[id].push(r);recById[r.id]=r});
+  const a={id,socio:num,nombre,sector,dir,serie,anterior:acum};state.acometidas.push(a);acoMap[id]=a;(acoBySocio[num]=acoBySocio[num]||[]).push(a);
+}
+function addSocio(num,nombre,sector){const s={num,nombre,sector};state.socios.push(s);socioMap[num]=s}
+
 const RAW=[
  [142,'Rosa Elena Martínez','Centro',[['Casa de habitación','MD-48213'],['Local comercial','MD-48214']]],
  [101,'José Antonio Hernández','Centro',[['Casa de habitación','MD-47001']]],
  [108,'María Guadalupe Rivas','Centro',[['Casa de habitación','MD-47055']]],
  [115,'Carlos Alberto Mejía','El Calvario',[['Casa de habitación','MD-47102']]],
- [120,'Ana Patricia Flores','El Calvario',[['Casa de habitación','MD-47140']]],
  [127,'Juan Francisco Portillo','San José',[['Casa de habitación','MD-47188']]],
- [133,'Marta Lidia Cruz','San José',[['Casa de habitación','MD-47231']]],
  [138,'Roberto Carlos Alvarado','La Esperanza',[['Casa de habitación','MD-47276']]],
- [150,'Sandra Beatriz Quintanilla','Centro',[['Casa de habitación','MD-47320']]],
  [156,'Luis Fernando Argueta','El Calvario',[['Casa de habitación','MD-47365']]],
- [163,'Dora Alicia Menjívar','San José',[['Casa de habitación','MD-47410']]],
  [171,'Miguel Ángel Orellana','La Esperanza',[['Casa de habitación','MD-47455']]],
- [178,'Gloria Esperanza Ayala','Centro',[['Casa de habitación','MD-47499']]],
- [185,'Santos Evelio Pineda','El Calvario',[['Casa de habitación','MD-47542']]],
  [190,'Blanca Estela Henríquez','San José',[['Casa de habitación','MD-47588']]],
- [204,'Óscar Armando Rodríguez','La Esperanza',[['Casa de habitación','MD-47631']]],
  [212,'Teresa de Jesús Lemus','Centro',[['Casa de habitación','MD-47677']]],
  [219,'Pedro Antonio Zelaya','El Calvario',[['Casa de habitación','MD-47720'],['Finca / riego','MD-47721']]],
- [230,'Vilma Concepción Ramos','San José',[['Casa de habitación','MD-47766']]],
  [241,'Héctor Manuel Guardado','La Esperanza',[['Casa de habitación','MD-47810']]],
 ];
-// meses adeudados iniciales por acometida
 const MORA_SEED={'142-2':2,'108-1':3,'115-1':1,'127-1':2,'138-1':3,'156-1':1,'171-1':2,'190-1':4,'212-1':1,'219-2':1,'241-1':2};
+RAW.forEach(([num,nombre,sector,acs])=>{addSocio(num,nombre,sector);acs.forEach(([dir,serie],i)=>addAco(num,i+1,nombre,sector,dir,serie,MORA_SEED[num+'-'+(i+1)]||0))});
+const NOM=['José','María','Juan','Ana','Carlos','Rosa','Luis','Marta','Miguel','Gloria','Pedro','Sandra','Santos','Blanca','Óscar','Teresa','Roberto','Dora','Héctor','Vilma','Manuel','Carmen','Francisco','Julia','Mauricio','Lidia','Rafael','Elsy','Ernesto','Karla'];
+const AP=['Hernández','Martínez','López','García','Rivas','Mejía','Flores','Portillo','Cruz','Alvarado','Quintanilla','Argueta','Menjívar','Orellana','Ayala','Pineda','Henríquez','Rodríguez','Lemus','Zelaya','Ramos','Guardado','Castro','Vásquez','Membreño','Cáceres','Amaya','Villatoro','Chávez','Salazar'];
+let serieN=50000;
+for(let n=1;n<=1040;n++){ if(socioMap[n])continue;
+  const nombre=`${pick(NOM)} ${pick(AP)} ${pick(AP)}`,sector=pick(SECTORES),r=rnd(),mora=r<.78?0:r<.88?1:r<.95?2:r<.985?3:4;
+  addSocio(n,nombre,sector);addAco(n,1,nombre,sector,'Casa de habitación','MD-'+(serieN++),mora);
+  if(rnd()<.07)addAco(n,2,nombre,sector,pick(['Local comercial','Finca / riego']),'MD-'+(serieN++),Math.min(mora,1));
+}
+state.socios.sort((a,b)=>a.num-b.num);
+for(let i=101;i<=114;i++)state.medidores.push({serie:'MD-60'+i,modelo:'Medidor ½" chorro múltiple',estado:'bodega'});
+state.medidores.push({serie:'MD-60090',modelo:'Medidor ½" chorro múltiple',estado:'baja'},{serie:'MD-60091',modelo:'Medidor ½" chorro múltiple',estado:'baja'});
 
-const state={tarifa:{base:3.00,incl:15,extra:0.40},socios:[],acometidas:[],receipts:[],lecturas:{},nextComp:124};
-let seed=11;const rnd=()=>(seed=(seed*9301+49297)%233280)/233280;
-const calc=(m3,t=state.tarifa)=>{const exM3=Math.max(0,m3-t.incl);const exc=exM3*t.extra;return{base:t.base,exM3,exc,total:t.base+exc}};
+/* ---- Libro diario inicial (noviembre) ---- */
+function pushLibro(e){e.id=++state.seq.libro;e.anulado=false;e.recIds=e.recIds||[];state.libro.push(e);return e}
+[['2026-11-03','Cobros de recibos',612.40,'Efectivo'],['2026-11-06','Cobros de recibos',548.75,'Efectivo'],['2026-11-06','Cobros de recibos',120,'Transferencia'],
+ ['2026-11-10','Cobros de recibos',710.20,'Efectivo'],['2026-11-13','Cobros de recibos',655.90,'Efectivo'],['2026-11-13','Cobros de recibos',98.50,'Transferencia']]
+ .forEach(([f,d,m,me])=>pushLibro({fecha:f,hora:'16:00',tipo:'ingreso',cat:'Cobro de recibos',desc:d+' (resumen de turno cerrado)',monto:m,metodo:me,turno:0,usuario:USERS.secretaria}));
+pushLibro({fecha:'2026-11-12',hora:'10:20',tipo:'ingreso',cat:'Nueva acometida',desc:'Socio #1021 · Cantón El Pedregal',monto:150,metodo:'Transferencia',turno:0,usuario:USERS.secretaria});
+pushLibro({fecha:'2026-11-13',hora:'11:05',tipo:'ingreso',cat:'Derecho de reconexión',desc:'3 reconexiones',monto:15,metodo:'Efectivo',turno:0,usuario:USERS.secretaria});
+[['2026-11-02','Energía eléctrica de bombas','Recibo eléctrico · bomba pozo 1',842.30,'Transferencia'],['2026-11-04','Cloro / insumos químicos','Hipoclorito de calcio 20 kg',215,'Efectivo'],
+ ['2026-11-05','Materiales PVC / fontanería','Tubería PVC 2" y accesorios',186.40,'Efectivo'],['2026-11-07','Salarios / viáticos','Salario fontanero (nov)',450,'Transferencia'],
+ ['2026-11-07','Salarios / viáticos','Salario secretaria/cajera (nov)',380,'Transferencia'],['2026-11-10','Mantenimiento','Reparación bomba sumergible',295,'Efectivo'],
+ ['2026-11-12','Salarios / viáticos','Viáticos ruta de lectura',60,'Efectivo']]
+ .forEach(([f,c,d,m,me])=>pushLibro({fecha:f,hora:'09:30',tipo:'egreso',cat:c,desc:d,monto:m,metodo:me,turno:null,usuario:USERS.tesorero}));
+[['07:52','Cobro de recibos','Acom 101-1 · Octubre',38.40,'Efectivo'],['08:15','Cobro de recibos','Acom 120-1 · Octubre',22.15,'Efectivo'],
+ ['09:03','Cobro de recibos','Acom 150-1 · Sep, Oct',45,'Transferencia'],['09:40','Derecho de reconexión','Acom 163-1',5,'Efectivo']]
+ .forEach(([h,c,d,m,me])=>pushLibro({fecha:HOY,hora:h,tipo:'ingreso',cat:c,desc:d,monto:m,metodo:me,turno:1,usuario:USERS.secretaria}));
+state.cortes.push({turno:0,fecha:'2026-11-14',hora:'16:45',saldoInicial:50,ef:402.30,tr:98.50,total:500.80,esperado:452.30,contado:452.30,dif:0,conceptos:{'Cobro de recibos':500.80}});
+state.audit=[
+ {ts:'14/11/2026 16:40',user:USERS.secretaria,accion:'Anuló cobro',detalle:'Cobro de recibos $24.75 · Acom 088-1 · Motivo: cobro duplicado',nivel:'alto'},
+ {ts:'12/11/2026 10:12',user:USERS.admin,accion:'Modificó saldo',detalle:'Acom 174-1 · Sep: $6.80 → $3.00 · Motivo: medidor dañado, aprobado por Junta',nivel:'alto'},
+ {ts:'10/11/2026 09:00',user:USERS.tesorero,accion:'Registró egreso',detalle:'Mantenimiento $295.00 · Reparación bomba sumergible',nivel:'info'},
+ {ts:'08/11/2026 15:20',user:USERS.admin,accion:'Cambio de tarifa',detalle:'Precio m³ excedente: $0.35 → $0.40',nivel:'alto'},
+ {ts:'05/11/2026 08:02',user:USERS.secretaria,accion:'Apertura de caja',detalle:'Turno #0 · saldo inicial $50.00',nivel:'info'}];
 
-RAW.forEach(([num,nombre,sector,acs])=>{
-  state.socios.push({num,nombre,sector});
-  acs.forEach(([dir,serie],i)=>{
-    const id=num+'-'+(i+1), mora=MORA_SEED[id]||0;
-    let acum=1000+Math.floor(rnd()*3500);
-    PERIODOS_HIST.forEach((p,k)=>{
-      const m3=Math.round(7+rnd()*(id==='219-2'?30:20));
-      acum+=m3;
-      state.receipts.push({id:id+'|'+p,aco:id,periodo:p,m3,monto:calc(m3).total,pagado:k<PERIODOS_HIST.length-mora,fechaPago:null});
-    });
-    state.acometidas.push({id,socio:num,nombre,sector,dir,serie,anterior:acum});
-  });
-});
-
-/* ============================ HELPERS ============================ */
-const $=s=>document.querySelector(s);
-const fmt=n=>'$'+Number(n).toFixed(2);
-const acoById=id=>state.acometidas.find(a=>a.id===id);
-const recsOf=id=>state.receipts.filter(r=>r.aco===id).sort((a,b)=>a.periodo.localeCompare(b.periodo));
-const unpaidPrev=id=>state.receipts.filter(r=>r.aco===id&&!r.pagado&&r.periodo<PERIODO);
+/* ============================ LÓGICA COMPARTIDA ============================ */
+const recsOf=id=>recMap[id]||[];
+const unpaidPrev=id=>recsOf(id).filter(r=>!r.pagado&&!r.conv&&r.periodo<PERIODO);
 const moraOf=id=>unpaidPrev(id).length;
 const nivel=m=>m>=3?'rojo':m===2?'amarillo':'verde';
-const socioMora=num=>Math.max(0,...state.acometidas.filter(a=>a.socio===num).map(a=>moraOf(a.id)));
+const socioMora=num=>Math.max(0,...(acoBySocio[num]||[]).map(a=>moraOf(a.id)));
 const NIV={verde:{bg:'bg-emerald-100',tx:'text-emerald-800',dot:'bg-emerald-500',lbl:'Al día'},
   amarillo:{bg:'bg-amber-100',tx:'text-amber-800',dot:'bg-amber-400',lbl:'Aviso · 2 meses'},
   rojo:{bg:'bg-red-100',tx:'text-red-800',dot:'bg-red-500',lbl:'Corte · 3+ meses'}};
 const badge=n=>`<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${NIV[n].bg} ${NIV[n].tx}"><span class="w-2 h-2 rounded-full ${NIV[n].dot}"></span>${NIV[n].lbl}</span>`;
-function toast(msg){const t=$('#toast');t.innerHTML=`<div class="fade bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-medium max-w-sm text-center">${msg}</div>`;t.classList.remove('hidden');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.add('hidden'),3000)}
-function modal(html){const m=$('#modal');m.innerHTML=`<div class="fade bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">${html}</div>`;m.classList.remove('hidden');m.classList.add('flex')}
-function closeModal(){const m=$('#modal');m.classList.add('hidden');m.classList.remove('flex')}
+const sum=a=>round2(a.reduce((s,e)=>s+(e.monto!==undefined?e.monto:e),0));
+const me=()=>USERS[role];
+function audit(accion,detalle,nivel='info'){state.audit.unshift({ts:'16/11/2026 '+hora(),user:me(),accion,detalle,nivel})}
+function addLibro(e){const r=pushLibro(e);refreshChips();return r}
+const liveL=()=>state.libro.filter(e=>!e.anulado);
+const turnoEntries=()=>liveL().filter(e=>e.tipo==='ingreso'&&e.turno===state.caja.turno);
+function totales(per){
+  const L=liveL().filter(e=>per==='anio'||e.fecha.startsWith('2026-11'));
+  let ing=sum(L.filter(e=>e.tipo==='ingreso')),egr=sum(L.filter(e=>e.tipo==='egreso'));
+  if(per==='anio'){ing=round2(ing+MES_SEED.reduce((s,m)=>s+m.ing,0));egr=round2(egr+MES_SEED.reduce((s,m)=>s+m.egr,0))}
+  return{ing,egr,res:round2(ing-egr)};
+}
+const saldoNeto=()=>{const t=totales('anio');return round2(SALDO_INI+t.res)};
+function cartera(){
+  const r={1:{n:0,m:0},2:{n:0,m:0},3:{n:0,m:0}};
+  state.acometidas.forEach(a=>{const u=unpaidPrev(a.id);if(!u.length)return;const k=Math.min(3,u.length);r[k].n++;r[k].m+=sum(u)});
+  const cv=state.convenios.filter(c=>c.estado==='Vigente');r.conv={n:cv.length,m:sum(cv.map(c=>c.saldo))};
+  [1,2,3].forEach(k=>r[k].m=round2(r[k].m));return r;
+}
+function refreshChips(){
+  const m=totales('mes'),c=state.caja,t=c.abierta?sum(turnoEntries()):0;
+  const chip=(l,v,cl)=>`<span class="whitespace-nowrap">${l} <b class="${cl||'text-white'}">${v}</b></span>`;
+  $('#chips').innerHTML=`<div class="max-w-7xl mx-auto px-4 py-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-300">
+    ${chip(c.abierta?'🟢 Caja turno #'+c.turno+' · cobrado:':'🔴 Caja cerrada',c.abierta?fmt(t):'','text-emerald-300')}
+    ${chip('📈 Ingresos nov:',fmt(m.ing),'text-sky-300')}${chip('📉 Egresos nov:',fmt(m.egr),'text-amber-300')}${chip('🏦 Saldo neto caja+banco:',fmt(saldoNeto()),'text-white')}
+    <span class="text-slate-500 hidden md:inline">· Se actualiza en vivo al cobrar o registrar gastos</span></div>`;
+}
+function needCaja(){if(state.caja.abierta)return true;toast('🔴 La caja está cerrada. Abra caja en «Caja / Arqueo» para cobrar.');return false}
+function cobrarCaja(o){const e=addLibro({fecha:HOY,hora:hora(),tipo:'ingreso',turno:state.caja.turno,usuario:USERS.secretaria,...o});e.comp=String(state.seq.comp++).padStart(6,'0');return e}
+const tabBtn=(cur,k,l,fn)=>`<button onclick="${fn}('${k}')" class="shrink-0 px-5 py-3 rounded-xl font-semibold text-sm ${cur===k?'bg-slate-900 text-white shadow':'bg-white border text-slate-600 hover:bg-slate-50'}">${l}</button>`;
+function downloadCSV(name,rows){const csv='\ufeff'+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const u=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),500)}
 
 /* ============================ ROLES ============================ */
 let role='fontanero';
-const ROLES=[['fontanero','📱','Fontanero'],['secretaria','🖥️','Secretaria / Cajera'],['admin','📊','Administrador']];
-function setRole(r){role=r;renderNav();renderView()}
-function renderNav(){
-  $('#roleNav').innerHTML=ROLES.map(([k,i,l])=>`<button onclick="setRole('${k}')" class="px-4 py-2.5 rounded-xl text-sm font-semibold transition ${role===k?'bg-sky-500 text-white shadow':'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${i} ${l}</button>`).join('');
-}
-function renderView(){
-  if(role==='fontanero')renderF();else if(role==='secretaria')renderS();else renderA();
-}
+const ROLES=[['fontanero','📱','Fontanero'],['secretaria','🖥️','Secretaria / Cajera'],['tesorero','📒','Tesorero / Contador'],['admin','🛠️','Administrador']];
+function setRole(r){role=r;renderNav();renderView();window.scrollTo(0,0)}
+function renderNav(){$('#roleNav').innerHTML=ROLES.map(([k,i,l])=>`<button onclick="setRole('${k}')" class="px-4 py-2.5 rounded-xl text-sm font-semibold transition ${role===k?'bg-sky-500 text-white shadow':'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${i} ${l}</button>`).join('')}
+function renderView(){refreshChips();({fontanero:renderF,secretaria:renderS,tesorero:renderT,admin:renderA})[role]()}
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 
 /* ============================ FONTANERO (MÓVIL) ============================ */
-const fv={sector:'Todos',q:'',sel:null,actual:'',foto:false,width:80};
+const fv={sector:'Todos',q:'',sel:null,actual:'',foto:false,fotoHora:'',fotoLect:'',width:80};
 function renderF(){
   $('#view').innerHTML=`
   <div class="mb-4 text-center text-sm text-slate-500 hidden sm:block">Vista móvil del fontanero — así se vería en el celular durante la ruta de lectura.</div>
-  <div class="w-full sm:max-w-[400px] mx-auto sm:border-[10px] sm:border-slate-800 sm:rounded-[2.5rem] bg-slate-50 sm:h-[790px] overflow-y-auto shadow-xl relative" id="phone">
-    <div id="fbody"></div>
-  </div>`;
+  <div class="w-full sm:max-w-[400px] mx-auto sm:border-[10px] sm:border-slate-800 sm:rounded-[2.5rem] bg-slate-50 sm:h-[790px] overflow-y-auto shadow-xl relative"><div id="fbody"></div></div>`;
   fv.sel?renderFDetail():renderFList();
 }
 function renderFList(){
@@ -132,10 +192,10 @@ function renderFList(){
   $('#fbody').innerHTML=`
   <div class="bg-sky-600 text-white p-4 sticky top-0 z-10">
     <div class="text-xs text-sky-100">Ruta de lectura · ${MESES[PERIODO]}</div>
-    <div class="flex items-end justify-between"><div class="text-xl font-bold">Hola, Fontanero 👷</div><div class="text-sm font-semibold">${done}/${total} leídas</div></div>
-    <div class="h-2 bg-sky-800/50 rounded-full mt-2 overflow-hidden"><div class="h-full bg-white rounded-full transition-all" style="width:${done/total*100}%"></div></div>
+    <div class="flex items-end justify-between"><div class="text-xl font-bold">Hola, Fontanero 👷</div><div class="text-sm font-semibold">${done}/${total.toLocaleString('en-US')}</div></div>
+    <div class="h-2 bg-sky-800/50 rounded-full mt-2 overflow-hidden"><div class="h-full bg-white rounded-full transition-all" style="width:${Math.max(1,done/total*100)}%"></div></div>
     <input id="fq" value="${fv.q}" oninput="fv.q=this.value;fListItems()" placeholder="🔍 Socio # o N° de serie del medidor" class="mt-3 w-full rounded-xl px-4 py-3.5 text-slate-800 text-base" inputmode="search">
-    <div class="text-[11px] text-sky-100 mt-1">Prueba con <b>142</b> (2 acometidas) o <b>MD-47055</b></div>
+    <div class="text-[11px] text-sky-100 mt-1">Prueba con <b>142</b> (2 acometidas), <b>108</b> (orden de corte) o <b>MD-47055</b></div>
   </div>
   <div class="px-3 pt-3 flex gap-2 overflow-x-auto pb-1">
     ${['Todos',...SECTORES].map(s=>`<button onclick="fv.sector='${s}';renderFList()" class="shrink-0 px-4 py-2.5 rounded-full text-sm font-semibold ${fv.sector===s?'bg-sky-600 text-white':'bg-white border border-slate-300 text-slate-600'}">${s}</button>`).join('')}
@@ -146,295 +206,548 @@ function renderFList(){
 function fListItems(){
   const q=fv.q.trim().toLowerCase().replace('#','');
   const L=state.acometidas.filter(a=>(fv.sector==='Todos'||a.sector===fv.sector)&&(!q||a.id.toLowerCase().startsWith(q)||a.serie.toLowerCase().includes(q)));
-  $('#flist').innerHTML=L.length?L.map(a=>{
+  $('#flist').innerHTML=L.length?L.slice(0,40).map(a=>{
     const m=moraOf(a.id),n=nivel(m),leida=state.lecturas[a.id];
     return `<button onclick="openF('${a.id}')" class="w-full text-left bg-white rounded-2xl p-4 shadow-sm border border-slate-200 active:scale-[.99] transition flex items-center gap-3">
       <div class="w-16 h-16 rounded-xl bg-sky-50 text-sky-700 flex flex-col items-center justify-center shrink-0"><div class="text-[10px] uppercase">Acom.</div><div class="font-bold text-lg leading-none">${a.id}</div></div>
-      <div class="flex-1 min-w-0">
-        <div class="font-semibold truncate">${a.nombre}</div>
-        <div class="text-xs text-slate-500 truncate">${a.dir} · ${a.sector}</div>
-        <div class="text-xs text-slate-400 mono">${a.serie}</div>
-      </div>
-      <div class="text-right shrink-0 space-y-1">
-        ${leida?'<div class="text-emerald-600 font-bold text-sm">✓ Leída</div>':'<div class="text-slate-400 text-sm">Pendiente</div>'}
-        ${m>=2?`<div class="inline-block w-3 h-3 rounded-full ${NIV[n].dot}"></div>`:''}
-      </div></button>`}).join(''):`<div class="text-center text-slate-400 py-10">Sin resultados</div>`;
+      <div class="flex-1 min-w-0"><div class="font-semibold truncate">${a.nombre}</div><div class="text-xs text-slate-500 truncate">${a.dir} · ${a.sector}</div><div class="text-xs text-slate-400 mono">${a.serie}</div></div>
+      <div class="text-right shrink-0 space-y-1">${leida?'<div class="text-emerald-600 font-bold text-sm">✓ Leída</div>':'<div class="text-slate-400 text-sm">Pendiente</div>'}
+        ${m>=2?`<div class="inline-block w-3 h-3 rounded-full ${NIV[n].dot}"></div>`:''}</div></button>`}).join('')
+    +(L.length>40?`<div class="text-center text-xs text-slate-400 py-2">Mostrando 40 de ${L.length} · use el buscador o el sector</div>`:''):`<div class="text-center text-slate-400 py-10">Sin resultados</div>`;
 }
-function openF(id){fv.sel=id;fv.actual=state.lecturas[id]?String(state.lecturas[id].actual):'';fv.foto=state.lecturas[id]?state.lecturas[id].foto:false;renderFDetail()}
+function openF(id){const l=state.lecturas[id];fv.sel=id;fv.actual=l?String(l.actual):'';fv.foto=!!l;fv.fotoHora=l?l.fotoHora:'';fv.fotoLect=l?l.fotoLect:'';renderFDetail()}
 function renderFDetail(){
-  const a=acoById(fv.sel),m=moraOf(a.id);
+  const a=acoMap[fv.sel],m=moraOf(a.id);
   $('#fbody').innerHTML=`
   <div class="bg-sky-600 text-white p-4 sticky top-0 z-10 flex items-center gap-3">
     <button onclick="fv.sel=null;renderFList()" class="bg-white/20 rounded-xl px-4 py-3 font-bold text-lg">←</button>
-    <div><div class="text-xs text-sky-100">Acometida</div><div class="text-xl font-bold">${a.id} · ${a.nombre.split(' ').slice(0,2).join(' ')}</div></div>
-  </div>
+    <div><div class="text-xs text-sky-100">Acometida</div><div class="text-xl font-bold">${a.id} · ${a.nombre.split(' ').slice(0,2).join(' ')}</div></div></div>
   <div class="p-4 space-y-4">
     <div class="bg-white rounded-2xl p-4 border border-slate-200 text-sm space-y-1">
-      <div><b>${a.nombre}</b> · Socio #${a.socio}</div>
-      <div class="text-slate-500">${a.dir} · Sector ${a.sector}</div>
-      <div class="text-slate-500">Medidor: <span class="mono">${a.serie}</span></div>
-      ${m>=2?`<div class="mt-2">${badge(nivel(m))}</div>`:''}
-    </div>
+      <div><b>${a.nombre}</b> · Socio #${a.socio}</div><div class="text-slate-500">${a.dir} · Sector ${a.sector}</div>
+      <div class="text-slate-500">Medidor: <span class="mono">${a.serie}</span></div>${m>=2?`<div class="mt-2">${badge(nivel(m))}</div>`:''}</div>
     <div class="grid grid-cols-2 gap-3">
       <div class="bg-slate-200 rounded-2xl p-4"><div class="text-xs text-slate-500">Lectura anterior</div><div class="text-3xl font-bold mono">${a.anterior}</div><div class="text-xs text-slate-500">m³ · Oct 2026</div></div>
       <div class="bg-white rounded-2xl p-4 border-2 border-sky-400"><label class="text-xs text-sky-700 font-semibold">Lectura actual</label>
-        <input id="fact" type="number" inputmode="numeric" value="${fv.actual}" oninput="fv.actual=this.value;fCalc()" placeholder="0000" class="w-full text-3xl font-bold mono bg-transparent"></div>
-    </div>
-    <button id="fphoto" onclick="fv.foto=!fv.foto;fCalc()" class="w-full py-4 rounded-2xl font-semibold text-base border-2 border-dashed"></button>
+        <input id="fact" type="number" inputmode="numeric" value="${fv.actual}" oninput="fv.actual=this.value;fCalc()" placeholder="0000" class="w-full text-3xl font-bold mono bg-transparent"></div></div>
+    <button id="fphoto" onclick="fTakePhoto()" class="w-full py-4 rounded-2xl font-semibold text-base border-2"></button>
+    <div id="fphotoWrap"></div>
     <div id="calcArea"></div>
   </div>`;
   fCalc();
 }
+function photoSVG(a){
+  const l=String(fv.fotoLect).padStart(5,'0'),t=`font-family="monospace" font-size="9.5" fill="#fff"`;
+  return `<svg viewBox="0 0 320 180" class="w-full rounded-xl shadow"><defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#64748b"/><stop offset="1" stop-color="#1e293b"/></linearGradient></defs>
+  <rect width="320" height="180" fill="url(#pg)"/><circle cx="160" cy="68" r="50" fill="#e2e8f0" stroke="#0ea5e9" stroke-width="6"/>
+  <rect x="112" y="52" width="96" height="26" rx="4" fill="#0f172a"/><text x="160" y="72" text-anchor="middle" font-family="monospace" font-size="20" fill="#f8fafc" letter-spacing="3">${l}</text>
+  <text x="160" y="98" text-anchor="middle" font-size="9" fill="#475569">m³ · ${a.serie}</text>
+  <rect y="124" width="320" height="56" fill="rgba(0,0,0,.62)"/>
+  <text x="8" y="138" ${t}>SOCIO #${a.socio} · ACOM ${a.id} · ${a.serie}</text>
+  <text x="8" y="151" ${t}>16/11/2026 ${fv.fotoHora} · GPS 13.6912, -89.1873</text>
+  <text x="8" y="164" ${t}>Fontanero: W. Pérez · LECTURA ${parseInt(fv.fotoLect,10)} m³</text>
+  <text x="8" y="176" font-family="monospace" font-size="7.5" fill="#7dd3fc">AGUA VIVA · foto con sello de fecha, hora y ubicación</text></svg>`;
+}
+function fTakePhoto(){
+  const v=parseInt(fv.actual,10);if(isNaN(v)){toast('Ingrese primero la lectura actual');return}
+  fv.foto=true;fv.fotoHora=hora();fv.fotoLect=String(v);fCalc();
+}
 function fCalc(){
-  const a=acoById(fv.sel);if(!a)return;
-  // foto
-  const fp=$('#fphoto');
-  fp.className='w-full py-4 rounded-2xl font-semibold text-base border-2 '+(fv.foto?'border-emerald-400 bg-emerald-50 text-emerald-700 border-solid':'border-dashed border-slate-400 bg-white text-slate-600');
-  fp.innerHTML=fv.foto?'✅ Foto de respaldo guardada <span class="text-xs font-normal">(toca para repetir)</span>':'📷 Tomar foto de respaldo del medidor';
+  const a=acoMap[fv.sel];if(!a)return;
   const raw=fv.actual,act=parseInt(raw,10),has=raw!=='';
+  const fp=$('#fphoto');
+  fp.className='w-full py-4 rounded-2xl font-semibold text-base border-2 '+(fv.foto?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-dashed border-slate-400 bg-white text-slate-600');
+  fp.innerHTML=fv.foto?'✅ Foto con marca de agua guardada <span class="text-xs font-normal">(toca para repetir)</span>':'📷 Tomar foto de respaldo del medidor';
+  const mismatch=fv.foto&&String(act)!==fv.fotoLect;
+  $('#fphotoWrap').innerHTML=fv.foto?photoSVG(a)+(mismatch?`<div class="mt-2 bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-2 text-xs">⚠️ La foto muestra ${parseInt(fv.fotoLect,10)} m³ y la lectura escrita es distinta. Corrija o repita la foto.</div>`:''):'';
   const area=$('#calcArea');
   if(!has){area.innerHTML=`<div class="text-center text-slate-400 text-sm py-4">Ingrese la lectura actual para calcular el consumo.</div>`;return}
   if(act<a.anterior){area.innerHTML=`<div class="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-4 text-sm font-semibold">⚠️ La lectura actual no puede ser menor que la anterior (${a.anterior}).</div>`;return}
-  const m3=act-a.anterior,c=calc(m3),hist=recsOf(a.id),avg=hist.reduce((s,r)=>s+r.m3,0)/hist.length;
-  const arrears=unpaidPrev(a.id),arrAmt=arrears.reduce((s,r)=>s+r.monto,0),mm=arrears.length;
+  const m3=act-a.anterior,c=calc(m3),hist=recsOf(a.id).filter(r=>r.periodo<PERIODO),avg=hist.length?hist.reduce((s,r)=>s+r.m3,0)/hist.length:0;
+  const arrears=unpaidPrev(a.id),arrAmt=sum(arrears),mm=arrears.length,ok=fv.foto&&!mismatch;
   area.innerHTML=`
-  ${m3>avg*2&&m3>20?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-3 text-sm mb-3">⚠️ Consumo inusual: más del doble del promedio (${avg.toFixed(0)} m³). Verifique la lectura o posible fuga.</div>`:''}
+  ${m3>avg*2&&m3>20&&avg?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-3 text-sm mb-3">⚠️ Consumo inusual: más del doble del promedio (${avg.toFixed(0)} m³). Verifique la lectura o posible fuga.</div>`:''}
   <div class="bg-white rounded-2xl p-4 border border-slate-200 space-y-2">
     <div class="flex justify-between items-end"><span class="text-slate-500">Consumo del mes</span><span class="text-3xl font-bold text-sky-700">${m3} <span class="text-base">m³</span></span></div>
     <div class="border-t pt-2 text-sm space-y-1">
       <div class="flex justify-between"><span>Cuota fija (hasta ${state.tarifa.incl} m³)</span><b>${fmt(c.base)}</b></div>
       <div class="flex justify-between"><span>Excedente ${c.exM3} m³ × ${fmt(state.tarifa.extra)}</span><b>${fmt(c.exc)}</b></div>
       <div class="flex justify-between text-base pt-1 border-t"><span class="font-semibold">Total del mes</span><b class="text-sky-700">${fmt(c.total)}</b></div>
-      ${mm?`<div class="flex justify-between text-red-600"><span>Saldo anterior (${mm} ${mm>1?'meses':'mes'})</span><b>${fmt(arrAmt)}</b></div>`:''}
-    </div>
-  </div>
+      ${mm?`<div class="flex justify-between text-red-600"><span>Saldo anterior (${mm} ${mm>1?'meses':'mes'})</span><b>${fmt(arrAmt)}</b></div>`:''}</div></div>
   <div class="mt-4">
     <div class="flex items-center justify-between mb-2"><div class="font-semibold">🧾 Vista previa del ticket</div>
       <div class="flex bg-slate-200 rounded-xl p-1 text-sm font-semibold">
         <button onclick="fv.width=58;fCalc()" class="px-3 py-1.5 rounded-lg ${fv.width===58?'bg-white shadow':''}">58 mm</button>
         <button onclick="fv.width=80;fCalc()" class="px-3 py-1.5 rounded-lg ${fv.width===80?'bg-white shadow':''}">80 mm</button></div></div>
-    <div class="bg-slate-300 rounded-2xl p-4 flex justify-center overflow-x-auto">${ticketHTML(a,act,m3,c,arrAmt,mm)}</div>
-  </div>
-  <button ${fv.foto?'':'disabled'} onclick="fSave()" class="mt-4 w-full py-5 rounded-2xl text-lg font-bold text-white ${fv.foto?'bg-emerald-600 active:bg-emerald-700':'bg-slate-400'} shadow">🖨️ Guardar lectura e imprimir</button>
-  ${fv.foto?'':'<div class="text-center text-xs text-slate-500 mt-2">Toma la foto de respaldo para poder guardar.</div>'}
-  <div class="h-6"></div>`;
+    <div class="bg-slate-300 rounded-2xl p-4 flex justify-center overflow-x-auto">${ticketHTML(a,act,m3,c,arrAmt,mm)}</div></div>
+  <button ${ok?'':'disabled'} onclick="fSave()" class="mt-4 w-full py-5 rounded-2xl text-lg font-bold text-white ${ok?'bg-emerald-600 active:bg-emerald-700':'bg-slate-400'} shadow">🖨️ Guardar lectura e imprimir</button>
+  ${ok?'':'<div class="text-center text-xs text-slate-500 mt-2">Tome la foto de respaldo (con la misma lectura) para poder guardar.</div>'}<div class="h-6"></div>`;
 }
 function ticketHTML(a,act,m3,c,arrAmt,mm){
   const w=fv.width===58?224:300,sm=fv.width===58?'text-[11px]':'text-[13px]';
   const row=(l,r,b)=>`<div class="flex justify-between gap-2 ${b?'font-bold':''}"><span>${l}</span><span>${r}</span></div>`;
-  const total=c.total+arrAmt;
+  const total=round2(c.total+arrAmt);
   const alert=mm>=3?`<div class="dash"></div><div class="text-center font-bold border-2 border-black p-1.5 my-1 bg-black text-white">*** ORDEN DE CORTE ***<div class="font-normal text-[0.9em]">Adeuda ${mm} meses. El servicio será suspendido si no cancela antes del 30/11/2026.</div></div>`
    :mm===2?`<div class="dash"></div><div class="text-center font-bold border-2 border-black p-1.5 my-1">⚠ AVISO DE MORA ⚠<div class="font-normal text-[0.9em]">Adeuda 2 meses. Evite el corte pagando antes del 30/11/2026.</div></div>`:'';
   let qr='',r=5;for(let y=0;y<13;y++)for(let x=0;x<13;x++){r=(r*9301+49297)%233280;if(r%2||(x<3&&y<3)||(x>9&&y<3)||(x<3&&y>9))qr+=`<rect x="${x}" y="${y}" width="1" height="1"/>`}
   return `<div class="ticket mono ${sm}" style="width:${w}px">
-    <div class="text-center font-bold leading-tight">ASOCIACIÓN DE AGUA POTABLE<br>«AGUA VIVA»</div>
-    <div class="text-center text-[0.85em]">Recibo de consumo · ${MESES[PERIODO]}</div>
-    <div class="dash"></div>
-    ${row('Socio:','#'+a.socio)}${row('Acometida:',a.id)}
-    <div>${a.nombre}</div><div class="text-[0.9em]">${a.dir} · ${a.sector}</div>
-    ${row('Medidor:',a.serie)}${row('Fecha:','16/11/2026')}
-    <div class="dash"></div>
-    ${row('Lect. anterior:',a.anterior)}${row('Lect. actual:',act)}${row('Consumo:',m3+' m³',1)}
-    <div class="dash"></div>
-    ${row('Cuota fija ('+state.tarifa.incl+'m³):',fmt(c.base))}
-    ${row('Excedente '+c.exM3+'m³:',fmt(c.exc))}
-    ${row('Total del mes:',fmt(c.total),1)}
-    ${mm?row('Saldo anterior ('+mm+'m):',fmt(arrAmt)):''}
-    <div class="dash"></div>
-    <div class="flex justify-between font-bold text-[1.15em]"><span>TOTAL A PAGAR</span><span>${fmt(total)}</span></div>
-    <div class="text-[0.85em]">Vence: 30/11/2026</div>
-    ${alert}
-    <div class="dash"></div>
-    <svg viewBox="0 0 13 13" class="w-16 h-16 mx-auto" fill="#000">${qr}</svg>
-    <div class="text-center text-[0.8em] mt-1">Pague en oficina de lun a vie<br>¡Gracias por cuidar el agua!</div>
-  </div>`;
+    <div class="text-center font-bold leading-tight">ASOCIACIÓN DE AGUA POTABLE<br>«AGUA VIVA»</div><div class="text-center text-[0.85em]">Recibo de consumo · ${MESES[PERIODO]}</div><div class="dash"></div>
+    ${row('Socio:','#'+a.socio)}${row('Acometida:',a.id)}<div>${a.nombre}</div><div class="text-[0.9em]">${a.dir} · ${a.sector}</div>
+    ${row('Medidor:',a.serie)}${row('Fecha:','16/11/2026')}<div class="dash"></div>
+    ${row('Lect. anterior:',a.anterior)}${row('Lect. actual:',act)}${row('Consumo:',m3+' m³',1)}<div class="dash"></div>
+    ${row('Cuota fija ('+state.tarifa.incl+'m³):',fmt(c.base))}${row('Excedente '+c.exM3+'m³:',fmt(c.exc))}${row('Total del mes:',fmt(c.total),1)}
+    ${mm?row('Saldo anterior ('+mm+'m):',fmt(arrAmt)):''}<div class="dash"></div>
+    <div class="flex justify-between font-bold text-[1.15em]"><span>TOTAL A PAGAR</span><span>${fmt(total)}</span></div><div class="text-[0.85em]">Vence: 30/11/2026</div>
+    ${alert}<div class="dash"></div><svg viewBox="0 0 13 13" class="w-16 h-16 mx-auto" fill="#000">${qr}</svg>
+    <div class="text-center text-[0.8em] mt-1">Pague en oficina de lun a vie<br>¡Gracias por cuidar el agua!</div></div>`;
 }
 function fSave(){
-  const a=acoById(fv.sel),act=parseInt(fv.actual,10),m3=act-a.anterior,c=calc(m3);
-  state.lecturas[a.id]={actual:act,m3,foto:fv.foto};
-  state.receipts=state.receipts.filter(r=>r.id!==a.id+'|'+PERIODO);
-  state.receipts.push({id:a.id+'|'+PERIODO,aco:a.id,periodo:PERIODO,m3,monto:c.total,pagado:false,fechaPago:null});
-  toast('✅ Lectura guardada · enviando ticket a impresora (simulado)');
-  fv.sel=null;fv.actual='';fv.foto=false;renderFList();
+  const a=acoMap[fv.sel],act=parseInt(fv.actual,10),m3=act-a.anterior,c=calc(m3);
+  state.lecturas[a.id]={actual:act,m3,foto:true,fotoHora:fv.fotoHora,fotoLect:fv.fotoLect};
+  recMap[a.id]=recsOf(a.id).filter(r=>r.id!==a.id+'|'+PERIODO);delete recById[a.id+'|'+PERIODO];
+  const r={id:a.id+'|'+PERIODO,aco:a.id,periodo:PERIODO,m3,monto:c.total,pagado:false,fechaPago:null,conv:null};recMap[a.id].push(r);recById[r.id]=r;
+  toast('✅ Lectura guardada · enviando ticket a impresora (simulado)');fv.sel=null;fv.actual='';fv.foto=false;renderFList();
 }
 
 /* ============================ SECRETARIA / CAJERA ============================ */
-const sv={q:'',filtro:'todos',sel:142,aco:null};
+const sv={tab:'cobros',q:'',filtro:'todos',sel:142,aco:null,contado:'',convAco:null,cv:{pct:30,n:3}};
+const setTab=t=>{sv.tab=t;renderS()};
 function renderS(){
+  const c=state.caja;
+  $('#view').innerHTML=`
+  <div class="flex flex-wrap items-end justify-between gap-3 mb-4"><div><h1 class="text-2xl font-bold">Caja y atención al socio</h1>
+    <p class="text-slate-500 text-sm">Cobros, otros servicios, convenios de pago y arqueo diario.</p></div>
+    <div class="px-4 py-2 rounded-xl text-sm font-semibold ${c.abierta?'bg-emerald-100 text-emerald-800':'bg-red-100 text-red-800'}">${c.abierta?'🟢 Caja abierta · Turno #'+c.turno+' desde '+c.apertura:'🔴 Caja cerrada'}</div></div>
+  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['cobros','💵 Cobro de recibos'],['otros','🧾 Otros cobros'],['convenios','🤝 Convenios de pago'],['caja','🧮 Caja / Arqueo']].map(([k,l])=>tabBtn(sv.tab,k,l,'setTab')).join('')}</div>
+  <div id="stab"></div>`;
+  ({cobros:sCobros,otros:sOtros,convenios:sConv,caja:sCaja})[sv.tab]();
+}
+const closedBanner=()=>state.caja.abierta?'':`<div class="mb-4 bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm font-semibold flex flex-wrap items-center justify-between gap-2">🔴 La caja está cerrada: no se pueden registrar cobros. <button onclick="setTab('caja')" class="px-4 py-2 rounded-lg bg-red-600 text-white">Abrir caja</button></div>`;
+
+/* ---- Cobro de recibos ---- */
+function sCobros(){
   const cnt={verde:0,amarillo:0,rojo:0};state.socios.forEach(s=>cnt[nivel(socioMora(s.num))]++);
-  const card=(k,t,sub)=>`<button onclick="sv.filtro='${k}';sTable()" class="text-left rounded-2xl p-5 border-2 transition ${NIV[k]?.bg||'bg-white'} ${sv.filtro===k?'border-slate-800':'border-transparent'} shadow-sm">
+  const card=(k,t,sub)=>`<button onclick="sv.filtro='${k}';sCobros()" class="text-left rounded-2xl p-5 border-2 transition ${NIV[k].bg} ${sv.filtro===k?'border-slate-800':'border-transparent'} shadow-sm">
      <div class="flex items-center gap-2"><span class="w-4 h-4 rounded-full ${NIV[k].dot}"></span><span class="font-semibold ${NIV[k].tx}">${t}</span></div>
      <div class="text-4xl font-extrabold mt-2 ${NIV[k].tx}">${cnt[k]}</div><div class="text-sm ${NIV[k].tx} opacity-80">${sub}</div></button>`;
-  $('#view').innerHTML=`
-  <h1 class="text-2xl font-bold mb-1">Caja y atención al socio</h1>
-  <p class="text-slate-500 mb-4 text-sm">Busque socios, revise recibos y registre cobros. Semáforo de mora actualizado en tiempo real.</p>
-  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+  $('#stab').innerHTML=`${closedBanner()}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
     ${card('verde','Al día','0–1 mes de atraso')}${card('amarillo','Aviso de mora','2 meses sin pagar')}${card('rojo','Corte de servicio','3+ meses sin pagar')}
-    <button onclick="sv.filtro='todos';sTable()" class="rounded-2xl p-5 bg-white border-2 ${sv.filtro==='todos'?'border-slate-800':'border-transparent'} text-left shadow-sm"><div class="font-semibold text-slate-600">Todos los socios</div><div class="text-4xl font-extrabold mt-2">${state.socios.length}</div><div class="text-sm text-slate-500">de 1,000+ en producción</div></button>
-  </div>
+    <button onclick="sv.filtro='todos';sCobros()" class="rounded-2xl p-5 bg-white border-2 ${sv.filtro==='todos'?'border-slate-800':'border-transparent'} text-left shadow-sm"><div class="font-semibold text-slate-600">Todos los socios</div><div class="text-4xl font-extrabold mt-2">${state.socios.length.toLocaleString('en-US')}</div><div class="text-sm text-slate-500">${state.acometidas.length.toLocaleString('en-US')} acometidas</div></button></div>
   <div class="grid lg:grid-cols-5 gap-5">
     <section class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-      <input value="${sv.q}" oninput="sv.q=this.value;sTable()" placeholder="🔍 Buscar por N° de socio o nombre…" class="w-full border border-slate-300 rounded-xl px-4 py-3.5 text-base">
-      <div id="stable" class="mt-3 max-h-[520px] overflow-y-auto divide-y"></div>
-    </section>
-    <section class="lg:col-span-3" id="sdetail"></section>
-  </div>`;
+      <input value="${sv.q}" oninput="sv.q=this.value;sTable()" placeholder="🔍 N° de socio o nombre…" class="w-full border border-slate-300 rounded-xl px-4 py-3.5 text-base">
+      <div class="text-xs text-slate-400 mt-1" id="scount"></div><div id="stable" class="mt-2 max-h-[520px] overflow-y-auto divide-y"></div></section>
+    <section class="lg:col-span-3" id="sdetail"></section></div>`;
   sTable();sDetail();
 }
 function sTable(){
   const q=sv.q.trim().toLowerCase().replace('#','');
-  let L=state.socios.filter(s=>(!q||String(s.num).startsWith(q)||s.nombre.toLowerCase().includes(q))&&(sv.filtro==='todos'||nivel(socioMora(s.num))===sv.filtro));
-  $('#stable').innerHTML=L.length?L.map(s=>{const n=nivel(socioMora(s.num)),k=state.acometidas.filter(a=>a.socio===s.num).length;
+  const L=state.socios.filter(s=>(!q||String(s.num).startsWith(q)||s.nombre.toLowerCase().includes(q))&&(sv.filtro==='todos'||nivel(socioMora(s.num))===sv.filtro));
+  $('#scount').textContent=L.length.toLocaleString('en-US')+' socios';
+  $('#stable').innerHTML=L.length?L.slice(0,60).map(s=>{const n=nivel(socioMora(s.num)),k=acoBySocio[s.num].length;
     return `<button onclick="sv.sel=${s.num};sv.aco=null;sTable();sDetail()" class="w-full text-left py-3 px-2 flex items-center gap-3 rounded-lg hover:bg-slate-50 ${sv.sel===s.num?'bg-sky-50':''}">
-      <span class="w-3.5 h-3.5 rounded-full ${NIV[n].dot} shrink-0"></span>
-      <div class="flex-1 min-w-0"><div class="font-semibold truncate">#${s.num} · ${s.nombre}</div><div class="text-xs text-slate-500">${s.sector} · ${k} acometida${k>1?'s':''}</div></div>
-      </button>`}).join(''):'<div class="text-center text-slate-400 py-8">Sin resultados</div>';
-  // actualizar tarjetas activas de filtro sin re-render completo
-  document.querySelectorAll('#view button.border-2').forEach(b=>{});
+      <span class="w-3.5 h-3.5 rounded-full ${NIV[n].dot} shrink-0"></span><div class="flex-1 min-w-0"><div class="font-semibold truncate">#${s.num} · ${s.nombre}</div><div class="text-xs text-slate-500">${s.sector} · ${k} acometida${k>1?'s':''}</div></div></button>`}).join('')
+    +(L.length>60?`<div class="text-center text-xs text-slate-400 py-3">Mostrando 60 · use el buscador</div>`:''):'<div class="text-center text-slate-400 py-8">Sin resultados</div>';
 }
 function sDetail(){
-  const s=state.socios.find(x=>x.num===sv.sel),el=$('#sdetail');
+  const s=socioMap[sv.sel],el=$('#sdetail');
   if(!s){el.innerHTML='<div class="bg-white rounded-2xl p-10 text-center text-slate-400">Seleccione un socio</div>';return}
-  const acs=state.acometidas.filter(a=>a.socio===s.num);if(!sv.aco||!acs.find(a=>a.id===sv.aco))sv.aco=acs[0].id;
-  const a=acoById(sv.aco),recs=recsOf(a.id).slice().reverse(),pend=recs.filter(r=>!r.pagado),m=moraOf(a.id),tot=pend.reduce((x,r)=>x+r.monto,0);
+  const acs=acoBySocio[s.num];if(!sv.aco||!acoMap[sv.aco]||acoMap[sv.aco].socio!==s.num)sv.aco=acs[0].id;
+  const a=acoMap[sv.aco],recs=recsOf(a.id).slice().reverse(),pend=recs.filter(r=>!r.pagado&&!r.conv),m=moraOf(a.id),tot=sum(pend);
   el.innerHTML=`<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 fade">
-    <div class="flex flex-wrap justify-between gap-3 items-start">
-      <div><div class="text-xs text-slate-500">Socio #${s.num} · Sector ${s.sector}</div><div class="text-2xl font-bold">${s.nombre}</div></div>${badge(nivel(socioMora(s.num)))}</div>
-    <div class="flex gap-2 mt-4">${acs.map(x=>`<button onclick="sv.aco='${x.id}';sDetail()" class="px-4 py-2.5 rounded-xl font-semibold text-sm ${x.id===a.id?'bg-sky-600 text-white':'bg-slate-100 text-slate-600'}">Acometida ${x.id} <span class="font-normal opacity-80">· ${x.dir}</span></button>`).join('')}</div>
-    ${m>=3?`<div class="mt-4 bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm font-semibold">🔴 ${m} meses en mora: corresponde orden de corte de servicio.</div>`
+    <div class="flex flex-wrap justify-between gap-3 items-start"><div><div class="text-xs text-slate-500">Socio #${s.num} · Sector ${s.sector}</div><div class="text-2xl font-bold">${s.nombre}</div></div>${badge(nivel(socioMora(s.num)))}</div>
+    <div class="flex flex-wrap gap-2 mt-4">${acs.map(x=>`<button onclick="sv.aco='${x.id}';sDetail()" class="px-4 py-2.5 rounded-xl font-semibold text-sm ${x.id===a.id?'bg-sky-600 text-white':'bg-slate-100 text-slate-600'}">Acometida ${x.id} <span class="font-normal opacity-80">· ${a.id===x.id?a.dir:x.dir}</span></button>`).join('')}</div>
+    ${m>=3?`<div class="mt-4 bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm font-semibold">🔴 ${m} meses en mora: corresponde orden de corte. Puede cobrar el saldo o formalizar un convenio de pago.</div>`
      :m===2?`<div class="mt-4 bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-3 text-sm font-semibold">🟡 2 meses en mora: aviso de cobro. Al tercer mes se ordena el corte.</div>`:''}
     <table class="w-full mt-4 text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Periodo</th><th>Consumo</th><th>Monto</th><th>Estado</th><th></th></tr></thead>
     <tbody>${recs.map(r=>`<tr class="border-b last:border-0"><td class="py-3 font-medium">${MESES[r.periodo]}</td><td>${r.m3} m³</td><td class="font-semibold">${fmt(r.monto)}</td>
-      <td>${r.pagado?`<span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Pagado${r.fechaPago?' · '+r.fechaPago:''}</span>`:'<span class="px-2.5 py-1 rounded-full bg-red-100 text-red-800 text-xs font-semibold">Pendiente</span>'}</td>
-      <td class="text-right">${r.pagado?'':`<button onclick="payModal(['${r.id}'])" class="px-4 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-700">Cobrar</button>`}</td></tr>`).join('')}</tbody></table>
+      <td>${r.pagado?`<span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Pagado${r.fechaPago?' · '+r.fechaPago:''}</span>`:r.conv?`<span class="px-2.5 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-semibold">En convenio #${r.conv}</span>`:'<span class="px-2.5 py-1 rounded-full bg-red-100 text-red-800 text-xs font-semibold">Pendiente</span>'}</td>
+      <td class="text-right">${(r.pagado||r.conv)?'':`<button onclick="payModal(['${r.id}'])" class="px-4 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-700">Cobrar</button>`}</td></tr>`).join('')||'<tr><td colspan="5" class="py-6 text-center text-slate-400">Sin recibos aún (acometida nueva)</td></tr>'}</tbody></table>
     <div class="mt-4 flex flex-wrap items-center justify-between gap-3 bg-slate-50 rounded-xl p-4">
       <div><div class="text-xs text-slate-500">Total pendiente de esta acometida</div><div class="text-3xl font-extrabold ${tot?'text-red-600':'text-emerald-600'}">${fmt(tot)}</div></div>
-      <button ${tot?'':'disabled'} onclick="payModal(${JSON.stringify(pend.map(r=>r.id)).replace(/"/g,"'")})" class="px-6 py-4 rounded-xl text-lg font-bold text-white ${tot?'bg-emerald-600 hover:bg-emerald-700':'bg-slate-300'}">💵 Registrar cobro total</button></div>
-  </div>`;
+      <div class="flex flex-wrap gap-2">${unpaidPrev(a.id).length>=2?`<button onclick="goConv('${a.id}')" class="px-5 py-4 rounded-xl font-bold bg-sky-100 text-sky-800 hover:bg-sky-200">🤝 Fraccionar deuda</button>`:''}
+      <button ${tot?'':'disabled'} onclick="payModal(${JSON.stringify(pend.map(r=>r.id)).replace(/"/g,"'")})" class="px-6 py-4 rounded-xl text-lg font-bold text-white ${tot?'bg-emerald-600 hover:bg-emerald-700':'bg-slate-300'}">💵 Registrar cobro total</button></div></div></div>`;
 }
+const metodoSel=()=>`<label class="text-sm font-semibold">Forma de pago</label><select id="pm" class="w-full border rounded-xl px-3 py-3 mt-1 mb-4"><option>Efectivo</option><option>Transferencia</option></select>`;
 function payModal(ids){
-  const rs=ids.map(id=>state.receipts.find(r=>r.id===id)),tot=rs.reduce((s,r)=>s+r.monto,0),a=acoById(rs[0].aco);
-  window._pay=ids;
+  if(!needCaja())return;
+  const rs=ids.map(id=>recById[id]),tot=sum(rs.map(r=>r.monto)),a=acoMap[rs[0].aco];window._pay=ids;
   modal(`<h3 class="text-xl font-bold mb-1">Registrar cobro</h3><div class="text-sm text-slate-500 mb-3">Acometida ${a.id} · ${a.nombre}</div>
    <div class="bg-slate-50 rounded-xl p-3 text-sm space-y-1 mb-3">${rs.map(r=>`<div class="flex justify-between"><span>${MESES[r.periodo]}</span><b>${fmt(r.monto)}</b></div>`).join('')}
-   <div class="flex justify-between border-t pt-2 text-lg"><span>Total</span><b>${fmt(tot)}</b></div></div>
-   <label class="text-sm font-semibold">Forma de pago</label>
-   <select class="w-full border rounded-xl px-3 py-3 mt-1 mb-4"><option>Efectivo</option><option>Transferencia</option></select>
-   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button>
-   <button onclick="doPay()" class="flex-1 py-3.5 rounded-xl bg-emerald-600 text-white font-bold">Confirmar cobro</button></div>`);
+   <div class="flex justify-between border-t pt-2 text-lg"><span>Total</span><b>${fmt(tot)}</b></div></div>${metodoSel()}
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="doPay()" class="flex-1 py-3.5 rounded-xl bg-emerald-600 text-white font-bold">Confirmar cobro</button></div>`);
 }
 function doPay(){
-  const hoy='16/11/2026';
-  window._pay.forEach(id=>{const r=state.receipts.find(x=>x.id===id);r.pagado=true;r.fechaPago=hoy});
-  closeModal();toast(`✅ Cobro registrado · Comprobante N° ${String(state.nextComp++).padStart(6,'0')}`);renderS();
+  const rs=_pay.map(id=>recById[id]),a=acoMap[rs[0].aco];
+  const e=cobrarCaja({cat:'Cobro de recibos',desc:`Acom ${a.id} · ${rs.map(r=>MESES[r.periodo].split(' ')[0]).join(', ')}`,monto:sum(rs.map(r=>r.monto)),metodo:$('#pm').value,recIds:_pay.slice(),acoId:a.id});
+  rs.forEach(r=>{r.pagado=true;r.fechaPago='16/11/2026'});closeModal();toast(`✅ Cobro registrado · Comprobante N° ${e.comp} · Caja y balance actualizados`);renderS();
+}
+function goConv(id){sv.convAco=id;sv.tab='convenios';renderS()}
+
+/* ---- Buscador reutilizable de socio/acometida ---- */
+function pickerHTML(kind,pre=''){return `<label class="text-sm font-semibold">N° de socio o acometida (ej. 142 o 142-2)</label>
+  <input id="qa" value="${pre}" oninput="pickSearch('${kind}')" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="108-1"><div id="pmatch" class="space-y-2 mb-3"></div><div id="pinfo" class="mb-3"></div>`}
+function pickList(){const q=($('#qa').value||'').trim().replace('#','');return acoMap[q]?[acoMap[q]]:(acoBySocio[+q]||[])}
+function pickSearch(kind){
+  const L=pickList(),q=$('#qa').value.trim();window._pa=L.length===1?L[0].id:null;
+  $('#pmatch').innerHTML=L.length>1?L.map(a=>`<label class="flex gap-2 items-center p-2 border rounded-xl cursor-pointer text-sm"><input type="radio" name="pa" onchange="_pa='${a.id}';pickInfo('${kind}')"> <span><b>${a.id}</b> · ${a.nombre} · ${a.dir}</span></label>`).join('')
+   :L.length===1?`<div class="p-2 border rounded-xl bg-slate-50 text-sm"><b>${L[0].id}</b> · ${L[0].nombre} · ${L[0].dir} · ${L[0].sector}</div>`:(q?'<div class="text-sm text-red-600">No se encontró el socio o la acometida</div>':'');
+  pickInfo(kind);
+}
+function pickInfo(kind){
+  let ok=false,h='';const a=window._pa?acoMap[_pa]:null;
+  if(kind==='convenio'){convPreview();return}
+  if(a){const m=moraOf(a.id);
+    if(kind==='reconexion')ok=m===0,h=m?`<div class="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm">🔴 Tiene ${m} mes${m>1?'es':''} en mora. Debe liquidar el saldo o formalizar un convenio antes de reconectar. ${m>=2?`<button onclick="closeModal();goConv('${a.id}')" class="underline font-bold">Ir a convenios</button>`:''}</div>`:`<div class="bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl p-3 text-sm">✅ Sin mora (saldo liquidado o convenio vigente). Puede cobrar la reconexión.</div>`;
+    if(kind==='traspaso')ok=m===0,h=m?`<div class="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm">🔴 No se puede traspasar una acometida con mora (${m} mes${m>1?'es':''}).</div>`:`<div class="bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl p-3 text-sm">✅ Solvente. Titular actual: <b>${a.nombre}</b></div>`;
+    if(kind==='constancia')ok=m===0,h=m?`<div class="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm">🔴 Socio NO solvente (${m} mes${m>1?'es':''} de mora): no se puede emitir la constancia.</div>`:`<div class="bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl p-3 text-sm">✅ Socio solvente. Se puede emitir constancia.</div>`;
+  }
+  window._ok=ok;$('#pinfo').innerHTML=h;const b=$('#cbtn');if(b){b.disabled=!ok;b.className='flex-1 py-3.5 rounded-xl font-bold text-white '+(ok?'bg-emerald-600':'bg-slate-300')}
 }
 
-/* ============================ ADMINISTRADOR ============================ */
-const ac={stage:0,prog:0,dl:false,chk:false,purged:false};
+/* ---- Otros cobros ---- */
+const OTROS={reconexion:{i:'🔌',t:'Derecho de reconexión',d:'Servicio cortado por mora, ya regularizado',f:()=>state.tarifa.reconexion},
+  acometida:{i:'🚰',t:'Nueva acometida',d:'Alta de nuevo socio con medidor de bodega',f:()=>state.tarifa.acometida},
+  traspaso:{i:'🔁',t:'Traspaso de titular',d:'Cambio de nombre del socio titular',f:()=>state.tarifa.traspaso},
+  constancia:{i:'📄',t:'Constancia de solvencia',d:'Documento para trámites del socio',f:()=>state.tarifa.constancia}};
+function sOtros(){
+  const rec=state.libro.filter(e=>e.tipo==='ingreso'&&e.turno===state.caja.turno&&['Derecho de reconexión','Nueva acometida','Traspaso de titular','Constancia de solvencia'].includes(e.cat)).sort((a,b)=>b.id-a.id);
+  $('#stab').innerHTML=`${closedBanner()}<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+   ${Object.entries(OTROS).map(([k,o])=>`<button onclick="otroModal('${k}')" class="text-left bg-white rounded-2xl p-5 border border-slate-200 shadow-sm hover:border-sky-400 hover:shadow transition">
+     <div class="text-4xl">${o.i}</div><div class="font-bold mt-2">${o.t}</div><div class="text-xs text-slate-500 mb-3">${o.d}</div><div class="text-2xl font-extrabold text-sky-700">${fmt(o.f())}</div></button>`).join('')}</div>
+  <section class="bg-white rounded-2xl border border-slate-200 p-5"><h2 class="font-bold mb-3">Cobros adicionales del turno actual</h2>
+   ${rec.length?`<table class="w-full text-sm"><tbody>${rec.map(e=>`<tr class="border-b last:border-0 ${e.anulado?'opacity-40 line-through':''}"><td class="py-2 text-slate-500">${e.hora}</td><td><b>${e.cat}</b><div class="text-xs text-slate-500">${e.desc}</div></td><td>${e.metodo}</td><td class="text-right font-bold">${fmt(e.monto)}</td></tr>`).join('')}</tbody></table>`:'<div class="text-slate-400 text-sm">Aún no hay cobros adicionales en este turno.</div>'}</section>`;
+}
+function otroModal(kind){
+  if(!needCaja())return;const o=OTROS[kind];window._ok=false;window._pa=null;let body='',okInit=false;
+  if(kind==='acometida'){
+    const stock=state.medidores.filter(m=>m.estado==='bodega');okInit=stock.length>0;window._ok=okInit;
+    body=stock.length?`<label class="text-sm font-semibold">Nombre del nuevo socio</label><input id="nn" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="Nombre completo">
+     <label class="text-sm font-semibold">Dirección / cantón</label><input id="nd" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="Cantón El Pedregal">
+     <label class="text-sm font-semibold">Sector</label><select id="ns" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2">${SECTORES.map(s=>`<option>${s}</option>`).join('')}</select>
+     <label class="text-sm font-semibold">Medidor de bodega a instalar <span class="font-normal text-slate-500">(${stock.length} disponibles)</span></label><select id="nm" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${stock.slice(0,10).map(m=>`<option>${m.serie}</option>`).join('')}</select>`
+     :`<div class="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm mb-3">🔴 No hay medidores en bodega. Pida al Administrador ingresar un lote.</div>`;
+  }else body=pickerHTML(kind)+(kind==='traspaso'?`<label class="text-sm font-semibold">Nuevo titular</label><input id="ntit" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3" placeholder="Nombre completo del nuevo titular">`:'');
+  modal(`<h3 class="text-xl font-bold mb-1">${o.i} ${o.t}</h3><div class="text-2xl font-extrabold text-sky-700 mb-3">${fmt(o.f())}</div>${body}${metodoSel()}
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button id="cbtn" ${okInit?'':'disabled'} onclick="otroConfirm('${kind}')" class="flex-1 py-3.5 rounded-xl font-bold text-white ${okInit?'bg-emerald-600':'bg-slate-300'}">Cobrar y emitir</button></div>`);
+}
+function otroConfirm(kind){
+  if(!_ok)return;const o=OTROS[kind],fee=o.f(),metodo=$('#pm').value;let e;
+  if(kind==='acometida'){
+    const nombre=esc($('#nn').value.trim()),dir=esc($('#nd').value.trim());if(!nombre||!dir){toast('⚠️ Complete nombre y dirección');return}
+    const serie=$('#nm').value,num=Math.max(...state.socios.map(s=>s.num))+1;
+    e=cobrarCaja({cat:'Nueva acometida',desc:`Socio #${num} · ${dir}`,monto:fee,metodo});
+    addSocio(num,nombre,$('#ns').value);addAco(num,1,nombre,$('#ns').value,dir,serie,0,true);
+    state.medidores.find(m=>m.serie===serie).estado='instalado';state.instaladosAnio++;
+    audit('Nueva acometida',`Socio #${num} ${nombre} · medidor ${serie} descontado de bodega`);
+    toast(`✅ Socio #${num} creado · medidor ${serie} instalado · Comprobante ${e.comp}`);
+  }else{
+    const a=acoMap[_pa];
+    if(kind==='traspaso'){const nt=esc($('#ntit').value.trim());if(!nt){toast('⚠️ Indique el nuevo titular');return}
+      e=cobrarCaja({cat:'Traspaso de titular',desc:`Acom ${a.id} · ${a.nombre} → ${nt}`,monto:fee,metodo,acoId:a.id});
+      audit('Traspaso de titular',`Acom ${a.id}: ${a.nombre} → ${nt}`,'alto');a.nombre=nt;if(acoBySocio[a.socio].length===1)socioMap[a.socio].nombre=nt;
+      toast(`✅ Traspaso registrado · Comprobante ${e.comp}`)}
+    else if(kind==='reconexion'){e=cobrarCaja({cat:'Derecho de reconexión',desc:`Acom ${a.id} · ${a.nombre}`,monto:fee,metodo,acoId:a.id});toast(`✅ Reconexión cobrada · Comprobante ${e.comp}`)}
+    else{e=cobrarCaja({cat:'Constancia de solvencia',desc:`Socio #${a.socio} · ${a.nombre}`,monto:fee,metodo,acoId:a.id});
+      modal(`<div class="mono text-sm leading-relaxed"><div class="text-center font-bold">ASOCIACIÓN DE AGUA POTABLE «AGUA VIVA»</div><div class="text-center mb-4">CONSTANCIA DE SOLVENCIA N° ${e.comp}</div>
+       <p>Se hace constar que <b>${a.nombre}</b>, socio #${a.socio}, titular de la acometida <b>${a.id}</b> (${a.dir}, sector ${a.sector}), se encuentra <b>SOLVENTE</b> con esta Asociación al 16 de noviembre de 2026.</p>
+       <p class="mt-6 text-center">_____________________<br>Presidente / Secretaria</p></div>
+       <div class="flex gap-3 mt-5"><button onclick="toast('🖨️ Enviado a impresora (simulado)')" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">🖨️ Imprimir</button><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-sky-600 text-white font-bold">Cerrar</button></div>`);sOtros();return}
+  }
+  closeModal();sOtros();
+}
+
+/* ---- Convenios de pago ---- */
+function sConv(){
+  const L=state.convenios.slice().reverse();
+  $('#stab').innerHTML=`${closedBanner()}<div class="grid lg:grid-cols-2 gap-5">
+   <section class="bg-white rounded-2xl border border-slate-200 p-5"><h2 class="font-bold text-lg mb-1">Nuevo convenio de pago</h2><p class="text-sm text-slate-500 mb-3">Fracciona la deuda morosa en una prima inicial + cuotas mensuales. Mientras el convenio esté vigente se suspende la orden de corte.</p>
+     ${pickerHTML('convenio',sv.convAco||'')}<div id="cform"></div></section>
+   <section class="bg-white rounded-2xl border border-slate-200 p-5"><h2 class="font-bold text-lg mb-3">Convenios registrados (${L.length})</h2>
+     ${L.length?L.map(c=>`<div class="border rounded-xl p-4 mb-3 ${c.estado==='Vigente'?'':'bg-slate-50 opacity-70'}">
+       <div class="flex justify-between items-start"><div><div class="font-bold">#${c.id} · Acom ${c.aco}</div><div class="text-xs text-slate-500">${c.nombre} · desde ${c.fecha}</div></div>
+       <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${c.estado==='Vigente'?'bg-sky-100 text-sky-800':'bg-emerald-100 text-emerald-800'}">${c.estado}</span></div>
+       <div class="h-2.5 bg-slate-200 rounded-full overflow-hidden my-3"><div class="h-full bg-sky-500" style="width:${c.pagadas/c.n*100}%"></div></div>
+       <div class="grid grid-cols-3 text-xs text-slate-500"><div>Deuda<br><b class="text-slate-800 text-sm">${fmt(c.deuda)}</b></div><div>Prima pagada<br><b class="text-slate-800 text-sm">${fmt(c.prima)}</b></div><div>Saldo<br><b class="text-red-600 text-sm">${fmt(c.saldo)}</b></div></div>
+       <div class="flex items-center justify-between mt-3"><span class="text-sm">Cuotas ${c.pagadas}/${c.n} · ${fmt(c.cuota)}/mes</span>
+       ${c.estado==='Vigente'?`<button onclick="cuotaModal(${c.id})" class="px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-sm">Cobrar cuota</button>`:''}</div></div>`).join(''):'<div class="text-slate-400 text-sm">Aún no hay convenios. Cree uno desde el panel izquierdo.</div>'}</section></div>`;
+  if(sv.convAco)pickSearch('convenio');
+}
+function addMonthsFmt(i){const d=new Date(2026,10+i,16);return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear()}
+function convPreview(){
+  const a=window._pa?acoMap[_pa]:null,f=$('#cform');if(!f)return;
+  if(!a){f.innerHTML='';return}sv.convAco=a.id;
+  const u=unpaidPrev(a.id),deuda=sum(u.map(r=>r.monto));
+  if(u.length<2){f.innerHTML=`<div class="bg-slate-50 border rounded-xl p-3 text-sm text-slate-600">${u.length?'Solo tiene 1 mes pendiente.':'No tiene deuda morosa.'} El convenio requiere <b>al menos 2 meses</b> de mora.</div>`;return}
+  const prima=round2(deuda*sv.cv.pct/100),resto=round2(deuda-prima),cuota=round2(resto/sv.cv.n);
+  f.innerHTML=`<div class="bg-slate-50 rounded-xl p-3 text-sm mb-3"><div class="font-semibold mb-1">Deuda a fraccionar · ${u.length} meses</div>${u.map(r=>`<div class="flex justify-between"><span>${MESES[r.periodo]}</span><b>${fmt(r.monto)}</b></div>`).join('')}<div class="flex justify-between border-t mt-1 pt-1 text-base"><span>Total</span><b>${fmt(deuda)}</b></div></div>
+   <label class="text-sm font-semibold">Prima inicial: <b id="pctL">${sv.cv.pct}%</b></label><input type="range" min="20" max="60" step="5" value="${sv.cv.pct}" oninput="sv.cv.pct=+this.value;convPreview()" class="w-full mb-3">
+   <label class="text-sm font-semibold">Número de cuotas</label><select onchange="sv.cv.n=+this.value;convPreview()" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${[2,3,4,5,6].map(n=>`<option ${n===sv.cv.n?'selected':''} value="${n}">${n} cuotas mensuales</option>`).join('')}</select>
+   <div class="bg-sky-50 border border-sky-200 rounded-xl p-3 text-sm mb-3"><div class="flex justify-between"><span>Prima hoy</span><b class="text-sky-800 text-lg">${fmt(prima)}</b></div>
+    <div class="flex justify-between"><span>${sv.cv.n} cuotas de</span><b>${fmt(cuota)}</b></div><div class="text-xs text-slate-500 mt-1">Vencimientos: ${Array.from({length:sv.cv.n},(_,i)=>addMonthsFmt(i+1)).join(' · ')}</div></div>
+   ${metodoSel()}<button onclick="convCreate()" class="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold">Formalizar convenio y cobrar prima</button>`;
+}
+function convCreate(){
+  if(!needCaja())return;const a=acoMap[_pa],u=unpaidPrev(a.id),deuda=sum(u.map(r=>r.monto));
+  const prima=round2(deuda*sv.cv.pct/100),resto=round2(deuda-prima),n=sv.cv.n,id=state.seq.conv;
+  const e=cobrarCaja({cat:'Prima de convenio',desc:`Convenio #${id} · Acom ${a.id}`,monto:prima,metodo:$('#pm').value,acoId:a.id,conv:id});
+  state.seq.conv++;u.forEach(r=>r.conv=id);
+  state.convenios.push({id,aco:a.id,nombre:a.nombre,deuda,prima,resto,n,cuota:round2(resto/n),pagadas:0,saldo:resto,estado:'Vigente',fecha:'16/11/2026',recIds:u.map(r=>r.id)});
+  audit('Convenio de pago',`#${id} Acom ${a.id}: deuda ${fmt(deuda)} → prima ${fmt(prima)} + ${n} cuotas`);
+  toast(`✅ Convenio #${id} formalizado · prima cobrada (${e.comp}) · orden de corte suspendida`);sv.convAco=null;renderS();
+}
+function cuotaModal(id){
+  if(!needCaja())return;const c=state.convenios.find(x=>x.id===id),monto=c.pagadas===c.n-1?c.saldo:c.cuota;window._cid=id;
+  modal(`<h3 class="text-xl font-bold mb-1">Cobrar cuota de convenio #${id}</h3><div class="text-sm text-slate-500 mb-3">Acom ${c.aco} · cuota ${c.pagadas+1} de ${c.n}</div>
+   <div class="bg-slate-50 rounded-xl p-4 text-center mb-3"><div class="text-xs text-slate-500">Monto de la cuota</div><div class="text-3xl font-extrabold">${fmt(monto)}</div></div>${metodoSel()}
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="doCuota()" class="flex-1 py-3.5 rounded-xl bg-emerald-600 text-white font-bold">Confirmar</button></div>`);
+}
+function doCuota(){
+  const c=state.convenios.find(x=>x.id===_cid),monto=c.pagadas===c.n-1?c.saldo:c.cuota;
+  const e=cobrarCaja({cat:'Cuota de convenio',desc:`Convenio #${c.id} · cuota ${c.pagadas+1}/${c.n}`,monto,metodo:$('#pm').value,acoId:c.aco,conv:c.id});
+  c.pagadas++;c.saldo=round2(c.saldo-monto);
+  if(c.pagadas===c.n){c.estado='Cancelado';c.saldo=0;c.recIds.forEach(id=>{const r=recById[id];r.pagado=true;r.fechaPago='16/11/2026'});toast(`🎉 Convenio #${c.id} cancelado totalmente · recibos saldados`)}
+  else toast(`✅ Cuota cobrada · Comprobante ${e.comp}`);
+  closeModal();renderS();
+}
+
+/* ---- Caja / Arqueo ---- */
+function cajaTotals(){const es=turnoEntries(),ef=sum(es.filter(e=>e.metodo==='Efectivo')),tr=sum(es.filter(e=>e.metodo==='Transferencia'));return{es,ef,tr,total:round2(ef+tr),esperado:round2(state.caja.saldoInicial+ef)}}
+function conceptos(es){const o={};es.forEach(e=>o[e.cat]=round2((o[e.cat]||0)+e.monto));return o}
+function corteHTML(c){const row=(l,r,b)=>`<div class="flex justify-between ${b?'font-bold':''}"><span>${l}</span><span>${r}</span></div>`;
+  return `<div class="ticket mono text-[13px] mx-auto" style="width:300px"><div class="text-center font-bold">AGUA VIVA · CORTE DE CAJA</div><div class="text-center text-[0.85em]">Turno #${c.turno} · ${fechaFmt(c.fecha)} ${c.hora}</div><div class="dash"></div>
+   ${row('Cajera:','M. López')}${row('Saldo inicial:',fmt(c.saldoInicial))}<div class="dash"></div>
+   ${Object.entries(c.conceptos).map(([k,v])=>row(k,fmt(v))).join('')||row('Sin cobros','$0.00')}<div class="dash"></div>
+   ${row('Cobrado efectivo:',fmt(c.ef))}${row('Cobrado transfer.:',fmt(c.tr))}${row('TOTAL COBRADO:',fmt(c.total),1)}<div class="dash"></div>
+   ${row('Efectivo esperado:',fmt(c.esperado))}${row('Efectivo contado:',fmt(c.contado))}${row(c.dif>0?'SOBRANTE:':c.dif<0?'FALTANTE:':'DIFERENCIA:',fmt(Math.abs(c.dif)),1)}
+   <div class="mt-6 text-center">_______________<br>Firma cajera</div></div>`}
+function sCaja(){
+  const c=state.caja,el=$('#stab');
+  if(!c.abierta){const l=state.cortes[state.cortes.length-1];
+    el.innerHTML=`<div class="grid lg:grid-cols-2 gap-5"><section class="bg-white rounded-2xl border border-slate-200 p-6">
+      <h2 class="font-bold text-lg mb-1">🔓 Apertura de caja</h2><p class="text-sm text-slate-500 mb-4">Ingrese el fondo inicial con el que arranca el nuevo turno (#${c.turno+1}).</p>
+      <label class="text-sm font-semibold">Saldo inicial (efectivo)</label><input id="aps" type="number" step="0.01" value="50" class="w-full border rounded-xl px-4 py-4 text-2xl font-bold mt-1 mb-4">
+      <button onclick="doApertura()" class="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg">Abrir caja</button></section>
+      <section class="bg-white rounded-2xl border border-slate-200 p-6"><h2 class="font-bold text-lg mb-3">Último corte generado</h2><div class="bg-slate-200 rounded-xl p-4">${corteHTML(l)}</div></section></div>`;return}
+  const t=cajaTotals(),todos=state.libro.filter(e=>e.tipo==='ingreso'&&e.turno===c.turno).sort((a,b)=>b.id-a.id),con=conceptos(t.es);
+  const kpi=(l,v,s,cl='')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold mt-1 ${cl}">${v}</div><div class="text-xs text-slate-400 mt-1">${s}</div></div>`;
+  const noAnul=['Nueva acometida','Traspaso de titular','Prima de convenio','Cuota de convenio'];
+  el.innerHTML=`<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">${kpi('Saldo inicial',fmt(c.saldoInicial),'apertura '+c.apertura)}${kpi('Cobrado en el turno',fmt(t.total),t.es.length+' transacciones','text-emerald-600')}
+    ${kpi('💵 Efectivo',fmt(t.ef),'cobros en efectivo')}${kpi('🏦 Transferencias',fmt(t.tr),'a cuenta bancaria','text-sky-700')}</div>
+  <div class="grid lg:grid-cols-3 gap-5">
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-1"><h2 class="font-bold mb-3">Arqueo y corte</h2>
+     <div class="text-sm space-y-1 mb-3"><div class="flex justify-between"><span>Saldo inicial</span><b>${fmt(c.saldoInicial)}</b></div><div class="flex justify-between"><span>+ Cobrado en efectivo</span><b>${fmt(t.ef)}</b></div>
+      <div class="flex justify-between border-t pt-1 text-base"><span class="font-semibold">Efectivo esperado en caja</span><b class="text-sky-700">${fmt(t.esperado)}</b></div></div>
+     <label class="text-sm font-semibold">Efectivo contado (arqueo)</label><input id="cnt" type="number" step="0.01" value="${sv.contado}" oninput="sv.contado=this.value;cajaDiff()" placeholder="0.00" class="w-full border rounded-xl px-4 py-3 text-xl font-bold mt-1"><div id="cdiff" class="mt-2 min-h-[2.5rem]"></div>
+     <button onclick="corteModal()" class="mt-3 w-full py-4 rounded-xl bg-slate-900 hover:bg-slate-700 text-white font-bold">🧾 Generar Corte de Caja</button>
+     <h3 class="font-semibold mt-5 mb-2 text-sm">Detalle por concepto</h3>${Object.entries(con).map(([k,v])=>`<div class="flex justify-between text-sm py-1 border-b last:border-0"><span>${k}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="text-slate-400 text-sm">Sin cobros</div>'}</section>
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2"><h2 class="font-bold mb-3">Transacciones del turno</h2><div class="max-h-[560px] overflow-y-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Hora</th><th>Concepto</th><th>Método</th><th class="text-right">Monto</th><th></th></tr></thead><tbody>
+     ${todos.map(e=>`<tr class="border-b last:border-0 ${e.anulado?'opacity-40':''}"><td class="py-2.5 text-slate-500">${e.hora}</td><td><b class="${e.anulado?'line-through':''}">${e.cat}</b>${e.anulado?' <span class="text-xs text-red-600 font-semibold">ANULADO</span>':''}<div class="text-xs text-slate-500">${e.desc}${e.comp?' · N° '+e.comp:''}</div></td>
+      <td>${e.metodo}</td><td class="text-right font-bold ${e.anulado?'line-through':''}">${fmt(e.monto)}</td><td class="text-right">${e.anulado?'':noAnul.includes(e.cat)?'<span class="text-xs text-slate-400" title="Requiere autorización de Directiva">🔒</span>':`<button onclick="anularModal(${e.id})" class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100">Anular</button>`}</td></tr>`).join('')}</tbody></table></div></section></div>`;
+  cajaDiff();
+}
+function cajaDiff(){const el=$('#cdiff');if(!el)return;const v=parseFloat(sv.contado);if(isNaN(v)){el.innerHTML='';return}
+  const d=round2(v-cajaTotals().esperado);el.innerHTML=d===0?'<div class="bg-emerald-100 text-emerald-800 rounded-lg px-3 py-2 text-sm font-semibold">✅ Caja cuadrada</div>':d>0?`<div class="bg-amber-100 text-amber-800 rounded-lg px-3 py-2 text-sm font-semibold">Sobrante de ${fmt(d)}</div>`:`<div class="bg-red-100 text-red-800 rounded-lg px-3 py-2 text-sm font-semibold">Faltante de ${fmt(-d)}</div>`}
+function corteModal(){
+  const v=parseFloat(sv.contado);if(isNaN(v)){toast('⚠️ Ingrese el efectivo contado para el arqueo');return}
+  const t=cajaTotals(),c={turno:state.caja.turno,fecha:HOY,hora:hora(),saldoInicial:state.caja.saldoInicial,ef:t.ef,tr:t.tr,total:t.total,esperado:t.esperado,contado:round2(v),dif:round2(v-t.esperado),conceptos:conceptos(t.es)};window._corte=c;
+  modal(`<h3 class="text-xl font-bold mb-3">Corte de caja · turno #${c.turno}</h3><div class="bg-slate-200 rounded-xl p-3 mb-4 max-h-[60vh] overflow-y-auto">${corteHTML(c)}</div>
+   <p class="text-xs text-slate-500 mb-3">Al confirmar se cierra la caja. Para volver a cobrar deberá abrir un nuevo turno.</p>
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="doCorte()" class="flex-1 py-3.5 rounded-xl bg-slate-900 text-white font-bold">Cerrar caja</button></div>`);
+}
+function doCorte(){state.cortes.push(_corte);state.caja.abierta=false;audit('Corte de caja',`Turno #${_corte.turno} · cobrado ${fmt(_corte.total)} · diferencia ${fmt(_corte.dif)}`,_corte.dif!==0?'alto':'info');
+  sv.contado='';closeModal();refreshChips();toast('🧾 Corte de caja generado y caja cerrada');renderS()}
+function doApertura(){const v=parseFloat($('#aps').value);if(isNaN(v)||v<0){toast('⚠️ Ingrese un saldo inicial válido');return}
+  state.caja={abierta:true,turno:state.caja.turno+1,saldoInicial:round2(v),apertura:hora()};audit('Apertura de caja',`Turno #${state.caja.turno} · saldo inicial ${fmt(v)}`);toast('🟢 Caja abierta');renderView()}
+function anularModal(id){window._an=id;const e=state.libro.find(x=>x.id===id);
+  modal(`<h3 class="text-xl font-bold mb-1">Anular ${e.tipo==='ingreso'?'cobro':'egreso'}</h3><div class="text-sm text-slate-500 mb-3">${e.cat} · ${e.desc} · <b>${fmt(e.monto)}</b></div>
+   <label class="text-sm font-semibold">Motivo (queda en la bitácora de auditoría)</label><textarea id="mot" rows="3" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3" placeholder="Ej. cobro duplicado"></textarea>
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="doAnular()" class="flex-1 py-3.5 rounded-xl bg-red-600 text-white font-bold">Anular</button></div>`);}
+function doAnular(){const mot=esc($('#mot').value.trim());if(mot.length<5){toast('⚠️ Escriba un motivo (mín. 5 caracteres)');return}
+  const e=state.libro.find(x=>x.id===_an);e.anulado=true;e.recIds.forEach(id=>{const r=recById[id];if(r){r.pagado=false;r.fechaPago=null}});
+  audit(e.tipo==='ingreso'?'Anuló cobro':'Anuló egreso',`${e.cat} ${fmt(e.monto)} · ${e.desc} · Motivo: ${mot}`,'alto');closeModal();toast('🗑️ Registro anulado · totales recalculados');renderView()}
+
+/* ============================ TESORERO / CONTADOR ============================ */
+const tv={tab:'libro',per:'mes',filtro:'todos',rep:'balance'};
+const tSet=t=>{tv.tab=t;renderT()};
+function renderT(){
+  $('#view').innerHTML=`<div class="mb-4"><h1 class="text-2xl font-bold">Tesorería y contabilidad</h1><p class="text-slate-500 text-sm">Libro diario, balance financiero y reportes para Asamblea. Se alimenta en vivo de los cobros de caja.</p></div>
+  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['libro','📒 Libro diario'],['balance','📈 Balance financiero'],['reportes','📤 Reportes para Asamblea']].map(([k,l])=>tabBtn(tv.tab,k,l,'tSet')).join('')}</div><div id="ttab"></div>`;
+  ({libro:tLibro,balance:tBalance,reportes:tReportes})[tv.tab]();
+}
+function tLibro(){
+  let L=state.libro.filter(e=>e.fecha.startsWith('2026-11')&&(tv.filtro==='todos'||(tv.filtro==='ing'?e.tipo==='ingreso':e.tipo==='egreso')));
+  L=L.sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);const live=L.filter(e=>!e.anulado),ti=sum(live.filter(e=>e.tipo==='ingreso')),te=sum(live.filter(e=>e.tipo==='egreso'));
+  const ic=Object.fromEntries(CATS_EGR);
+  $('#ttab').innerHTML=`<div class="grid lg:grid-cols-3 gap-5">
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 h-fit"><h2 class="font-bold text-lg mb-3">➖ Registrar gasto operativo</h2>
+    <label class="text-sm font-semibold">Fecha</label><input id="eFecha" type="date" value="${HOY}" min="2026-11-01" max="${HOY}" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">
+    <label class="text-sm font-semibold">Categoría</label><select id="eCat" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${CATS_EGR.map(([c,i])=>`<option>${c}</option>`).join('')}</select>
+    <label class="text-sm font-semibold">Descripción / proveedor</label><input id="eDesc" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3" placeholder="Ej. Recibo eléctrico noviembre">
+    <div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-sm font-semibold">Monto ($)</label><input id="eMonto" type="number" step="0.01" class="w-full border rounded-xl px-3 py-3 mt-1" placeholder="0.00"></div>
+     <div><label class="text-sm font-semibold">Pagado con</label><select id="eMet" class="w-full border rounded-xl px-3 py-3 mt-1"><option>Efectivo</option><option>Transferencia</option></select></div></div>
+    <label class="text-sm font-semibold">N° de factura / comprobante</label><input id="eRef" class="w-full border rounded-xl px-3 py-3 mt-1 mb-4" placeholder="Opcional">
+    <button onclick="regEgreso()" class="w-full py-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold">Registrar egreso</button></section>
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2"><div class="flex flex-wrap items-center justify-between gap-2 mb-3"><h2 class="font-bold text-lg">Libro diario · Noviembre 2026</h2>
+     <div class="flex bg-slate-100 rounded-xl p-1 text-sm font-semibold">${[['todos','Todos'],['ing','Ingresos'],['egr','Egresos']].map(([k,l])=>`<button onclick="tv.filtro='${k}';tLibro()" class="px-3 py-1.5 rounded-lg ${tv.filtro===k?'bg-white shadow':''}">${l}</button>`).join('')}</div></div>
+    <div class="max-h-[600px] overflow-y-auto"><table class="w-full text-sm"><thead class="sticky top-0 bg-white"><tr class="text-left text-slate-500 border-b"><th class="py-2">Fecha</th><th>Concepto</th><th>Método</th><th class="text-right">Ingreso</th><th class="text-right">Egreso</th><th></th></tr></thead><tbody>
+    ${L.slice(0,60).map(e=>`<tr class="border-b last:border-0 ${e.anulado?'opacity-40':''}"><td class="py-2.5 whitespace-nowrap text-slate-500">${fechaFmt(e.fecha).slice(0,5)} ${e.hora}</td>
+      <td><span class="font-semibold ${e.anulado?'line-through':''}">${e.tipo==='egreso'?(ic[e.cat]||'')+' ':'💵 '}${e.cat}</span>${e.anulado?' <span class="text-xs text-red-600 font-semibold">ANULADO</span>':''}<div class="text-xs text-slate-500">${e.desc}${e.ref?' · Ref '+esc(e.ref):''}</div></td><td>${e.metodo}</td>
+      <td class="text-right text-emerald-700 font-semibold">${e.tipo==='ingreso'?fmt(e.monto):''}</td><td class="text-right text-amber-700 font-semibold">${e.tipo==='egreso'?fmt(e.monto):''}</td>
+      <td class="text-right">${e.tipo==='egreso'&&!e.anulado?`<button onclick="anularModal(${e.id})" class="px-2 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold">Anular</button>`:''}</td></tr>`).join('')}</tbody>
+     <tfoot class="font-bold border-t-2"><tr><td colspan="3" class="py-3">Totales</td><td class="text-right text-emerald-700">${fmt(ti)}</td><td class="text-right text-amber-700">${fmt(te)}</td><td></td></tr></tfoot></table></div></section></div>`;
+}
+function regEgreso(){
+  const monto=parseFloat($('#eMonto').value),desc=esc($('#eDesc').value.trim());
+  if(!(monto>0)||!desc){toast('⚠️ Complete la descripción y un monto mayor a cero');return}
+  const cat=$('#eCat').value;addLibro({fecha:$('#eFecha').value||HOY,hora:hora(),tipo:'egreso',cat,desc,monto:round2(monto),metodo:$('#eMet').value,ref:$('#eRef').value,turno:null,usuario:USERS.tesorero});
+  audit('Registró egreso',`${cat} ${fmt(monto)} · ${desc}`);toast('✅ Egreso registrado · balance y saldo neto actualizados');tLibro();
+}
+function tBalance(){
+  const t=totales(tv.per),sn=saldoNeto(),cr=cartera(),mes=totales('mes');
+  const kpi=(l,v,s,bg,tx)=>`<div class="rounded-2xl p-5 shadow-sm border ${bg}"><div class="text-sm ${tx} opacity-80">${l}</div><div class="text-3xl font-extrabold mt-1 ${tx}">${v}</div><div class="text-xs ${tx} opacity-70 mt-1">${s}</div></div>`;
+  const per=tv.per==='mes'?'Noviembre 2026':'Año 2026 (ene–nov)';
+  let bottom='';
+  if(tv.per==='mes'){
+    const L=liveL().filter(e=>e.fecha.startsWith('2026-11')),ing=conceptos(L.filter(e=>e.tipo==='ingreso')),egr=conceptos(L.filter(e=>e.tipo==='egreso')),bars=(o,cl)=>{const mx=Math.max(1,...Object.values(o));return Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="mb-3"><div class="flex justify-between text-sm"><span>${k}</span><b>${fmt(v)}</b></div><div class="h-3 bg-slate-100 rounded-full overflow-hidden"><div class="h-full ${cl} rounded-full" style="width:${v/mx*100}%"></div></div></div>`).join('')};
+    bottom=`<section class="bg-white rounded-2xl border p-5"><h3 class="font-bold mb-3">Ingresos por concepto</h3>${bars(ing,'bg-emerald-500')}</section><section class="bg-white rounded-2xl border p-5"><h3 class="font-bold mb-3">Egresos por categoría</h3>${bars(egr,'bg-amber-500')}</section>`;
+  }else{
+    const M=[...MES_SEED,{m:'Nov',ing:mes.ing,egr:mes.egr}],mx=Math.max(...M.map(x=>Math.max(x.ing,x.egr)));
+    bottom=`<section class="bg-white rounded-2xl border p-5 lg:col-span-2"><h3 class="font-bold mb-1">Ingresos vs egresos por mes</h3><div class="flex gap-4 text-xs mb-3"><span><span class="inline-block w-3 h-3 bg-emerald-500 rounded-sm"></span> Ingresos</span><span><span class="inline-block w-3 h-3 bg-amber-500 rounded-sm"></span> Egresos</span></div>
+      <div class="flex items-end gap-2 h-52">${M.map(x=>`<div class="flex-1 flex flex-col items-center gap-1"><div class="flex items-end gap-1 h-44 w-full justify-center"><div class="w-1/2 bg-emerald-500 rounded-t" style="height:${x.ing/mx*100}%" title="${fmt(x.ing)}"></div><div class="w-1/2 bg-amber-500 rounded-t" style="height:${x.egr/mx*100}%" title="${fmt(x.egr)}"></div></div><div class="text-xs text-slate-500">${x.m}</div></div>`).join('')}</div></section>`;
+  }
+  $('#ttab').innerHTML=`<div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div class="text-lg font-bold">${per}</div>
+    <div class="flex bg-white border rounded-xl p-1 text-sm font-semibold"><button onclick="tv.per='mes';tBalance()" class="px-4 py-2 rounded-lg ${tv.per==='mes'?'bg-slate-900 text-white':''}">Mensual</button><button onclick="tv.per='anio';tBalance()" class="px-4 py-2 rounded-lg ${tv.per==='anio'?'bg-slate-900 text-white':''}">Anual</button></div></div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">${kpi('Total ingresos',fmt(t.ing),'recibos, reconexiones, acometidas…','bg-emerald-50 border-emerald-200','text-emerald-800')}
+   ${kpi('Total egresos',fmt(t.egr),'gastos operativos','bg-amber-50 border-amber-200','text-amber-800')}
+   ${kpi('Saldo neto disponible',fmt(sn),'caja + banco (acumulado)','bg-sky-50 border-sky-200','text-sky-800')}
+   ${kpi('Resultado del periodo',(t.res>=0?'+':'')+fmt(t.res),t.res>=0?'superávit':'déficit',t.res>=0?'bg-white border-slate-200':'bg-red-50 border-red-200',t.res>=0?'text-slate-800':'text-red-700')}</div>
+  <h2 class="font-bold mb-2">Cartera morosa por cobrar</h2>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">${[[1,'1 mes de atraso','bg-emerald-50 border-emerald-200 text-emerald-800'],[2,'2 meses · aviso','bg-amber-50 border-amber-200 text-amber-800'],[3,'3+ meses · corte','bg-red-50 border-red-200 text-red-800']].map(([k,l,c])=>`<div class="rounded-2xl p-5 border ${c}"><div class="text-sm opacity-80">${l}</div><div class="text-3xl font-extrabold">${fmt(cr[k].m)}</div><div class="text-xs opacity-70">${cr[k].n} acometidas</div></div>`).join('')}
+   <div class="rounded-2xl p-5 border bg-sky-50 border-sky-200 text-sky-800"><div class="text-sm opacity-80">En convenio de pago</div><div class="text-3xl font-extrabold">${fmt(cr.conv.m)}</div><div class="text-xs opacity-70">${cr.conv.n} convenios vigentes</div></div></div>
+  <div class="grid lg:grid-cols-2 gap-5">${bottom}</div>`;
+}
+const REPS={balance:'Balance general',libro:'Libro diario',cartera:'Cartera morosa',cortes:'Cortes de caja'};
+function tReportes(){
+  const t=totales(tv.per),sn=saldoNeto(),cr=cartera(),L=liveL().filter(e=>e.fecha.startsWith('2026-11')&&e.tipo==='egreso'),egr=conceptos(L);
+  $('#ttab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5"><section class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-5 h-fit">
+    <h2 class="font-bold text-lg mb-3">Exportar reporte contable</h2>
+    <label class="text-sm font-semibold">Reporte</label><select onchange="tv.rep=this.value" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${Object.entries(REPS).map(([k,l])=>`<option value="${k}" ${tv.rep===k?'selected':''}>${l}</option>`).join('')}</select>
+    <label class="text-sm font-semibold">Periodo</label><select onchange="tv.per=this.value;tReportes()" class="w-full border rounded-xl px-3 py-3 mt-1 mb-4"><option value="mes" ${tv.per==='mes'?'selected':''}>Noviembre 2026</option><option value="anio" ${tv.per==='anio'?'selected':''}>Año 2026</option></select>
+    <div class="grid grid-cols-2 gap-3"><button onclick="expPDF()" class="py-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold">📄 PDF</button><button onclick="expXLS()" class="py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold">📊 Excel</button></div>
+    <p class="text-xs text-slate-400 mt-3">PDF: simulado. Excel: descarga real de un archivo .csv con los datos actuales de la demo (se abre en Excel).</p></section>
+   <section class="lg:col-span-3 bg-white rounded-2xl border border-slate-300 p-8 shadow-sm"><div class="text-center border-b pb-4 mb-4"><div class="text-xs tracking-widest text-slate-500">ASOCIACIÓN DE AGUA POTABLE «AGUA VIVA»</div><div class="text-xl font-bold">Informe financiero para Asamblea General</div><div class="text-sm text-slate-500">${tv.per==='mes'?'Noviembre 2026':'Ejercicio 2026 (ene–nov)'}</div></div>
+    <table class="w-full text-sm mb-4"><tbody>${[['Total ingresos',fmt(t.ing)],['Total egresos',fmt(t.egr)],['Resultado del periodo',fmt(t.res)],['Saldo neto disponible (caja + banco)',fmt(sn)]].map(([a,b],i)=>`<tr class="border-b ${i===3?'font-bold':''}"><td class="py-2">${a}</td><td class="text-right">${b}</td></tr>`).join('')}</tbody></table>
+    <div class="font-semibold text-sm mb-1">Cartera morosa</div><table class="w-full text-sm mb-4"><tbody>${[['1 mes',cr[1]],['2 meses',cr[2]],['3+ meses',cr[3]]].map(([a,o])=>`<tr class="border-b"><td class="py-1.5">${a} (${o.n} acometidas)</td><td class="text-right">${fmt(o.m)}</td></tr>`).join('')}<tr class="border-b"><td class="py-1.5">En convenio (${cr.conv.n})</td><td class="text-right">${fmt(cr.conv.m)}</td></tr></tbody></table>
+    <div class="font-semibold text-sm mb-1">Egresos de noviembre por categoría</div><table class="w-full text-sm"><tbody>${Object.entries(egr).map(([k,v])=>`<tr class="border-b"><td class="py-1.5">${k}</td><td class="text-right">${fmt(v)}</td></tr>`).join('')}</tbody></table>
+    <div class="grid grid-cols-3 gap-4 text-center text-xs mt-10 text-slate-500"><div class="border-t pt-1">Tesorero</div><div class="border-t pt-1">Presidente</div><div class="border-t pt-1">Síndico</div></div></section></div>`;
+}
+function expPDF(){modal(`<div class="text-center py-6"><div class="text-5xl mb-3 animate-pulse">📄</div><div class="font-semibold">Generando ${REPS[tv.rep]}…</div></div>`);
+  setTimeout(()=>{modal(`<div class="text-center"><div class="text-5xl mb-2">✅</div><h3 class="text-lg font-bold">Reporte generado (simulado)</h3><p class="text-sm text-slate-500 mb-4 mono">reporte_${tv.rep}_2026.pdf</p><button onclick="closeModal()" class="w-full py-3 rounded-xl bg-sky-600 text-white font-bold">Cerrar</button></div>`)},1300)}
+function expXLS(){
+  let rows,name='reporte_'+tv.rep+'_2026.csv';
+  if(tv.rep==='libro')rows=[['Fecha','Hora','Tipo','Categoría','Descripción','Método','Monto','Anulado'],...state.libro.map(e=>[fechaFmt(e.fecha),e.hora,e.tipo,e.cat,e.desc,e.metodo,e.monto,e.anulado?'SÍ':'no'])];
+  else if(tv.rep==='cartera')rows=[['Acometida','Socio','Nombre','Sector','Meses en mora','Saldo'],...state.acometidas.filter(a=>moraOf(a.id)>0).map(a=>[a.id,a.socio,a.nombre,a.sector,moraOf(a.id),sum(unpaidPrev(a.id).map(r=>r.monto))])];
+  else if(tv.rep==='cortes')rows=[['Turno','Fecha','Hora','Saldo inicial','Efectivo','Transferencias','Total','Contado','Diferencia'],...state.cortes.map(c=>[c.turno,fechaFmt(c.fecha),c.hora,c.saldoInicial,c.ef,c.tr,c.total,c.contado,c.dif])];
+  else{const t=totales(tv.per),cr=cartera();rows=[['Concepto','Monto'],['Total ingresos',t.ing],['Total egresos',t.egr],['Resultado',t.res],['Saldo neto disponible',saldoNeto()],['Cartera 1 mes',cr[1].m],['Cartera 2 meses',cr[2].m],['Cartera 3+ meses',cr[3].m],['En convenio',cr.conv.m]]}
+  downloadCSV(name,rows);toast('📊 Descargando '+name);
+}
+
+/* ============================ ADMINISTRADOR / DIRECTIVA ============================ */
+const av={tab:'resumen'},ac={stage:0,prog:0,dl:false,chk:false,purged:false};
+const aSet=t=>{av.tab=t;renderA()};
 function renderA(){
-  const oct=state.receipts.filter(r=>r.periodo==='2026-10'),fact=oct.reduce((s,r)=>s+r.monto,0),cob=oct.filter(r=>r.pagado).reduce((s,r)=>s+r.monto,0);
-  const cartera=state.receipts.filter(r=>!r.pagado&&r.periodo<PERIODO).reduce((s,r)=>s+r.monto,0);
-  const cnt={verde:0,amarillo:0,rojo:0};state.socios.forEach(s=>cnt[nivel(socioMora(s.num))]++);
-  const sec=SECTORES.map(s=>({s,m3:oct.filter(r=>acoById(r.aco).sector===s).reduce((x,r)=>x+r.m3,0)})),mx=Math.max(...sec.map(x=>x.m3));
-  const kpi=(l,v,sub,c='text-slate-900')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold ${c} mt-1">${v}</div><div class="text-xs text-slate-400 mt-1">${sub}</div></div>`;
-  $('#view').innerHTML=`
-  <h1 class="text-2xl font-bold mb-1">Panel de administración</h1>
-  <p class="text-slate-500 mb-5 text-sm">Resumen general, tarifas y cierre anual con respaldo.</p>
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${kpi('Socios activos',state.socios.length,'muestra demo (producción: 1,000+)')}
-    ${kpi('Acometidas',state.acometidas.length,'medidores instalados')}
-    ${kpi('Cobrado Oct 2026',fmt(cob),'de '+fmt(fact)+' facturado','text-emerald-600')}
-    ${kpi('Cartera en mora',fmt(cartera),`🟡 ${cnt.amarillo} aviso · 🔴 ${cnt.rojo} corte`,'text-red-600')}
-  </div>
-  <div class="grid lg:grid-cols-2 gap-5 mb-6">
-    <section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-      <h2 class="font-bold text-lg mb-3">⚙️ Configuración de tarifa</h2>
-      <div class="grid grid-cols-3 gap-3">
-        <div><label class="text-xs font-semibold text-slate-500">Cuota fija ($)</label><input id="tBase" type="number" step="0.25" value="${state.tarifa.base}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
-        <div><label class="text-xs font-semibold text-slate-500">m³ incluidos</label><input id="tIncl" type="number" value="${state.tarifa.incl}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
-        <div><label class="text-xs font-semibold text-slate-500">$ por m³ extra</label><input id="tExtra" type="number" step="0.05" value="${state.tarifa.extra}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
-      </div>
-      <div class="mt-4 bg-sky-50 rounded-xl p-4 text-sm">
-        <div class="flex items-center gap-2">Simulador: consumo de <input id="tSim" type="number" value="22" oninput="tPreview()" class="w-20 border rounded-lg px-2 py-1 font-bold"> m³ →</div>
-        <div id="tOut" class="mt-1 text-lg font-bold text-sky-800"></div></div>
-      <button onclick="saveTarifa()" class="mt-4 w-full py-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold">Guardar tarifa</button>
-      <p class="text-xs text-slate-400 mt-2">Aplica a lecturas nuevas; los recibos ya emitidos no cambian.</p>
-    </section>
-    <section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-      <h2 class="font-bold text-lg mb-3">💧 Consumo por sector · Oct 2026</h2>
-      <div class="space-y-3">${sec.map(x=>`<div><div class="flex justify-between text-sm"><span class="font-medium">${x.s}</span><span class="text-slate-500">${x.m3} m³</span></div>
-        <div class="h-5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-sky-400 to-sky-600 rounded-full" style="width:${x.m3/mx*100}%"></div></div></div>`).join('')}</div>
-      <div class="mt-5 grid grid-cols-3 gap-2 text-center text-sm">
-        <div class="rounded-xl bg-emerald-100 text-emerald-800 p-3"><b class="text-2xl">${cnt.verde}</b><div>Al día</div></div>
-        <div class="rounded-xl bg-amber-100 text-amber-800 p-3"><b class="text-2xl">${cnt.amarillo}</b><div>Aviso</div></div>
-        <div class="rounded-xl bg-red-100 text-red-800 p-3"><b class="text-2xl">${cnt.rojo}</b><div>Corte</div></div></div>
-    </section>
-  </div>
-  <section id="cierre" class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm"></section>`;
-  tPreview();renderCierre();
+  $('#view').innerHTML=`<div class="mb-4"><h1 class="text-2xl font-bold">Panel de administración</h1><p class="text-slate-500 text-sm">Resumen, tarifas, inventario, auditoría y cierre anual.</p></div>
+  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['resumen','📊 Resumen'],['tarifas','⚙️ Tarifas'],['inventario','📦 Inventario'],['auditoria','🕵️ Auditoría'],['cierre','🗄️ Cierre anual']].map(([k,l])=>tabBtn(av.tab,k,l,'aSet')).join('')}</div><div id="atab"></div>`;
+  ({resumen:aResumen,tarifas:aTarifas,inventario:aInv,auditoria:aAud,cierre:aCierre})[av.tab]();
 }
-function tPreview(){
-  const t={base:+$('#tBase').value||0,incl:+$('#tIncl').value||0,extra:+$('#tExtra').value||0},m=+$('#tSim').value||0,c=calc(m,t);
-  $('#tOut').textContent=`${fmt(t.base)} + ${c.exM3} m³ × ${fmt(t.extra)} = ${fmt(c.total)}`;
+function aResumen(){
+  let fact=0,cob=0;const sec={};SECTORES.forEach(s=>sec[s]=0);
+  state.acometidas.forEach(a=>recsOf(a.id).forEach(r=>{if(r.periodo==='2026-10'){fact+=r.monto;if(r.pagado)cob+=r.monto;sec[a.sector]+=r.m3}}));
+  const cnt={verde:0,amarillo:0,rojo:0};state.socios.forEach(s=>cnt[nivel(socioMora(s.num))]++);const cr=cartera(),mx=Math.max(...Object.values(sec)),m=totales('mes');
+  const kpi=(l,v,s,c='text-slate-900')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold ${c} mt-1">${v}</div><div class="text-xs text-slate-400 mt-1">${s}</div></div>`;
+  $('#atab').innerHTML=`<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">${kpi('Socios activos',state.socios.length.toLocaleString('en-US'),state.acometidas.length.toLocaleString('en-US')+' acometidas')}${kpi('Cobrado Oct 2026',fmt(cob),'de '+fmt(fact)+' facturado','text-emerald-600')}
+   ${kpi('Cartera morosa',fmt(cr[1].m+cr[2].m+cr[3].m),`🟡 ${cnt.amarillo} aviso · 🔴 ${cnt.rojo} corte`,'text-red-600')}${kpi('Saldo neto caja+banco',fmt(saldoNeto()),'ingresos nov '+fmt(m.ing)+' · egresos '+fmt(m.egr),'text-sky-700')}</div>
+  <div class="grid lg:grid-cols-2 gap-5"><section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><h2 class="font-bold text-lg mb-3">💧 Consumo por sector · Oct 2026</h2>
+   ${Object.entries(sec).map(([s,v])=>`<div class="mb-3"><div class="flex justify-between text-sm"><span class="font-medium">${s}</span><span class="text-slate-500">${v.toLocaleString('en-US')} m³</span></div><div class="h-5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-sky-400 to-sky-600 rounded-full" style="width:${v/mx*100}%"></div></div></div>`).join('')}</section>
+   <section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><h2 class="font-bold text-lg mb-3">🚦 Estado de mora</h2><div class="grid grid-cols-3 gap-2 text-center text-sm">
+     <div class="rounded-xl bg-emerald-100 text-emerald-800 p-4"><b class="text-3xl">${cnt.verde}</b><div>Al día</div></div><div class="rounded-xl bg-amber-100 text-amber-800 p-4"><b class="text-3xl">${cnt.amarillo}</b><div>Aviso</div></div><div class="rounded-xl bg-red-100 text-red-800 p-4"><b class="text-3xl">${cnt.rojo}</b><div>Corte</div></div></div>
+     <div class="mt-4 text-sm text-slate-500">Convenios vigentes: <b class="text-slate-800">${cr.conv.n}</b> (${fmt(cr.conv.m)}) · Medidores en bodega: <b class="text-slate-800">${state.medidores.filter(x=>x.estado==='bodega').length}</b></div></section></div>`;
 }
-function saveTarifa(){state.tarifa={base:+$('#tBase').value||0,incl:+$('#tIncl').value||0,extra:+$('#tExtra').value||0};toast('✅ Tarifa actualizada · se usará en la app del fontanero')}
-
-function renderCierre(){
-  const prot=state.acometidas.filter(a=>moraOf(a.id)>0);
-  const yrs=[[2023,'Más antiguo'],[2024,''],[2025,''],[2026,'Año en curso']];
-  const purgedTxt=ac.purged;
-  $('#cierre').innerHTML=`
-  <div class="flex flex-wrap justify-between gap-2 items-start mb-4">
-    <div><h2 class="font-bold text-xl">🗄️ Cierre anual y respaldo</h2>
-    <p class="text-sm text-slate-500 max-w-2xl">Política de retención: se conservan <b>3 años</b> de historial en línea. Al cerrar 2026, el año más viejo (2023) se purga, <b>solo después</b> de descargar su respaldo.</p></div>
-    <span class="px-3 py-1.5 rounded-full bg-sky-100 text-sky-800 text-sm font-semibold">Cierre ejercicio 2026</span></div>
-
-  <div class="grid grid-cols-4 gap-2 mb-6">${yrs.map(([y,l])=>{
-    const old=y===2023,gone=old&&purgedTxt;
-    return `<div class="rounded-xl p-4 text-center border-2 ${gone?'border-dashed border-slate-300 bg-slate-50 text-slate-400':old?'border-red-300 bg-red-50':y===2026?'border-sky-400 bg-sky-50':'border-emerald-300 bg-emerald-50'}">
-      <div class="text-2xl font-extrabold">${y}</div><div class="text-xs font-semibold mt-1">${gone?'Purgado (en respaldo)':old?'A purgar':y===2026?'En curso':'Conservado'}</div></div>`}).join('')}</div>
-
-  <div class="grid lg:grid-cols-3 gap-4">
-    <div class="rounded-2xl border p-4 ${ac.stage>=2?'border-emerald-300 bg-emerald-50':'border-slate-200'}">
-      <div class="font-bold mb-1">Paso 1 · Generar respaldo ${ac.stage>=2?'✅':''}</div>
-      <p class="text-sm text-slate-500 mb-3">Recibos, lecturas, fotos de respaldo y pagos de 2023 en PDF + ZIP.</p>
-      ${ac.stage===0?`<button onclick="runBackup()" class="w-full py-3 rounded-xl bg-sky-600 text-white font-bold">Generar respaldo 2023</button>`:
-        ac.stage===1?`<div class="h-4 bg-slate-200 rounded-full overflow-hidden"><div class="h-full bg-sky-500 transition-all" style="width:${ac.prog}%"></div></div><div class="text-xs mt-1 text-slate-500">Empaquetando… ${ac.prog}%</div>`:
-        `<div class="text-sm text-emerald-700 font-semibold mb-2">Respaldo listo · 12,480 recibos · 38 MB</div>
-         <div class="flex gap-2"><button onclick="dl('PDF')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ PDF</button><button onclick="dl('ZIP')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ ZIP</button></div>
-         <div class="text-xs mt-2 ${ac.dl?'text-emerald-700':'text-amber-700'}">${ac.dl?'✓ Descarga registrada':'Descargue al menos un archivo para continuar'}</div>`}
-    </div>
-
-    <div class="rounded-2xl border border-slate-200 p-4">
-      <div class="font-bold mb-1">Paso 2 · Protecciones automáticas</div>
-      <p class="text-sm text-slate-500 mb-2">Nunca se purga:</p>
-      <ul class="text-sm space-y-1.5">
-        <li>🔒 <b>${prot.length}</b> acometidas con mora pendiente</li>
-        <li>🔒 Cierres anuales históricos (resúmenes)</li>
-        <li>🔒 Saldos y convenios de pago vigentes</li>
-      </ul>
-      <details class="mt-2 text-xs"><summary class="cursor-pointer text-sky-700 font-semibold">Ver cuentas protegidas</summary>
-        <div class="max-h-40 overflow-y-auto mt-1 divide-y">${prot.map(a=>`<div class="py-1 flex justify-between"><span>${a.id} · ${a.nombre}</span><b>${moraOf(a.id)} m.</b></div>`).join('')}</div></details>
-    </div>
-
-    <div class="rounded-2xl border p-4 ${purgedTxt?'border-emerald-300 bg-emerald-50':'border-slate-200'}">
-      <div class="font-bold mb-1">Paso 3 · Purgar año 2023 ${purgedTxt?'✅':''}</div>
-      ${purgedTxt?`<p class="text-sm text-emerald-700 font-semibold">Purga completada. Se conservan 2024–2026 y las cuentas protegidas.</p>
-         <button onclick="resetCierre()" class="mt-3 text-xs underline text-slate-500">Reiniciar demo</button>`:
-      `<p class="text-sm text-slate-500 mb-3">Acción irreversible. Requiere respaldo descargado.</p>
-       <label class="flex items-start gap-2 text-sm mb-3"><input type="checkbox" ${ac.chk?'checked':''} ${ac.dl?'':'disabled'} onchange="ac.chk=this.checked;renderCierre()" class="mt-1 w-5 h-5"> Verifiqué que el respaldo abre correctamente.</label>
-       <button ${ac.dl&&ac.chk?'':'disabled'} onclick="purgeModal()" class="w-full py-3 rounded-xl font-bold text-white ${ac.dl&&ac.chk?'bg-red-600 hover:bg-red-700':'bg-slate-300'}">🗑️ Purgar año 2023</button>`}
-    </div>
-  </div>`;
+const TF=[['base','Cuota fija ($)',0.25],['incl','m³ incluidos',1],['extra','$ por m³ extra',0.05],['reconexion','Derecho de reconexión ($)',0.5],['acometida','Nueva acometida ($)',5],['traspaso','Traspaso de titular ($)',1],['constancia','Constancia solvencia ($)',0.5]];
+function aTarifas(){
+  $('#atab').innerHTML=`<section class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm max-w-3xl"><h2 class="font-bold text-lg mb-4">⚙️ Configuración de tarifas y cobros</h2>
+   <div class="grid grid-cols-2 md:grid-cols-3 gap-4">${TF.map(([k,l,s])=>`<div><label class="text-xs font-semibold text-slate-500">${l}</label><input id="t_${k}" type="number" step="${s}" value="${state.tarifa[k]}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>`).join('')}</div>
+   <div class="mt-5 bg-sky-50 rounded-xl p-4 text-sm"><div class="flex items-center gap-2">Simulador: consumo de <input id="tSim" type="number" value="22" oninput="tPreview()" class="w-20 border rounded-lg px-2 py-1 font-bold"> m³ →</div><div id="tOut" class="mt-1 text-lg font-bold text-sky-800"></div></div>
+   <button onclick="saveTarifa()" class="mt-4 w-full py-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold">Guardar tarifas</button>
+   <p class="text-xs text-slate-400 mt-2">Aplica a lecturas y cobros nuevos; los recibos ya emitidos no cambian. Todo cambio queda en la bitácora de auditoría.</p></section>`;tPreview();
 }
-function runBackup(){ac.stage=1;ac.prog=0;renderCierre();const t=setInterval(()=>{ac.prog+=10;if(ac.prog>=100){clearInterval(t);ac.stage=2}if(role==='admin')renderCierre()},250)}
-function dl(t){ac.dl=true;toast('⬇ Descargando respaldo_2023.'+t.toLowerCase()+' (simulado)');renderCierre()}
-function purgeModal(){modal(`<h3 class="text-xl font-bold mb-2">¿Purgar el año 2023?</h3><p class="text-sm text-slate-600 mb-4">Se eliminarán los recibos y lecturas de 2023 de la base en línea. Las cuentas con mora y los cierres históricos <b>no</b> se tocan.</p>
-  <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="ac.purged=true;closeModal();toast('✅ Año 2023 purgado');renderCierre()" class="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold">Sí, purgar</button></div>`)}
-function resetCierre(){Object.assign(ac,{stage:0,prog:0,dl:false,chk:false,purged:false});renderCierre()}
+function tPreview(){const t={base:+$('#t_base').value||0,incl:+$('#t_incl').value||0,extra:+$('#t_extra').value||0},m=+$('#tSim').value||0,c=calc(m,t);$('#tOut').textContent=`${fmt(t.base)} + ${c.exM3} m³ × ${fmt(t.extra)} = ${fmt(c.total)}`}
+function saveTarifa(){const nt={},d=[];TF.forEach(([k,l])=>{nt[k]=+$('#t_'+k).value||0;if(nt[k]!==state.tarifa[k])d.push(`${l}: ${state.tarifa[k]} → ${nt[k]}`)});
+  if(!d.length){toast('Sin cambios que guardar');return}state.tarifa=nt;audit('Cambio de tarifa',d.join(' · '),'alto');toast('✅ Tarifas actualizadas · registradas en auditoría')}
+function aInv(){
+  const b=state.medidores.filter(m=>m.estado==='bodega'),bajas=state.medidores.filter(m=>m.estado==='baja').length,next=Math.max(...state.medidores.map(m=>+m.serie.slice(3)))+1,low=b.length<5;
+  const kpi=(l,v,s,c='')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold mt-1 ${c}">${v}</div><div class="text-xs text-slate-400 mt-1">${s}</div></div>`;
+  $('#atab').innerHTML=`<div class="grid grid-cols-3 gap-4 mb-5">${kpi('En bodega',b.length,low?'⚠️ bajo stock mínimo (5)':'stock mínimo: 5',low?'text-red-600':'text-emerald-600')}${kpi('Instalados en 2026',state.instaladosAnio,'se descuentan al cobrar «Nueva acometida»')}${kpi('Dados de baja',bajas,'dañados / retirados')}</div>
+  <div class="grid lg:grid-cols-3 gap-5"><section class="bg-white rounded-2xl border border-slate-200 p-5 h-fit"><h2 class="font-bold mb-3">➕ Ingresar lote de medidores</h2>
+    <label class="text-sm font-semibold">Cantidad</label><input id="lq" type="number" min="1" max="50" value="10" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="text-sm font-semibold">Costo unitario ($)</label><input id="lc" type="number" step="0.5" value="18" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">
+    <label class="text-sm font-semibold">Proveedor</label><input id="lp" value="Distribuidora Hidráulica S.A." class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="flex items-center gap-2 text-sm mb-4"><input id="lg" type="checkbox" checked class="w-5 h-5"> Registrar compra como egreso en el Libro Diario</label>
+    <div class="text-xs text-slate-500 mb-3">Series nuevas desde <span class="mono">MD-${next}</span></div><button onclick="addLote()" class="w-full py-3.5 rounded-xl bg-sky-600 text-white font-bold">Ingresar a bodega</button></section>
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2"><h2 class="font-bold mb-3">Medidores nuevos en bodega</h2><div class="max-h-[460px] overflow-y-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Serie</th><th>Modelo</th><th></th></tr></thead><tbody>
+    ${b.slice(0,40).map(m=>`<tr class="border-b last:border-0"><td class="py-2.5 mono font-semibold">${m.serie}</td><td>${m.modelo}</td><td class="text-right"><button onclick="bajaMed('${m.serie}')" class="px-3 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold hover:bg-red-50 hover:text-red-700">Dar de baja</button></td></tr>`).join('')||'<tr><td colspan="3" class="py-6 text-center text-slate-400">Bodega vacía</td></tr>'}</tbody></table></div></section></div>`;
+}
+function addLote(){const q=Math.min(50,parseInt($('#lq').value,10)||0),cu=parseFloat($('#lc').value)||0;if(q<1){toast('⚠️ Cantidad inválida');return}
+  let n=Math.max(...state.medidores.map(m=>+m.serie.slice(3)))+1;for(let i=0;i<q;i++)state.medidores.push({serie:'MD-'+(n+i),modelo:'Medidor ½" chorro múltiple',estado:'bodega'});
+  const tot=round2(q*cu);audit('Ingreso de inventario',`${q} medidores desde MD-${n} · ${esc($('#lp').value)} · ${fmt(tot)}`);
+  if($('#lg').checked&&tot>0)addLibro({fecha:HOY,hora:hora(),tipo:'egreso',cat:'Materiales PVC / fontanería',desc:`Compra de ${q} medidores · ${esc($('#lp').value)}`,monto:tot,metodo:'Transferencia',turno:null,usuario:USERS.tesorero});
+  toast(`✅ ${q} medidores ingresados${$('#lg').checked?' · egreso '+fmt(tot)+' en Libro Diario':''}`);aInv()}
+function bajaMed(s){state.medidores.find(m=>m.serie===s).estado='baja';audit('Baja de medidor',`${s} marcado como dañado/retirado`);toast('Medidor dado de baja');aInv()}
+function aAud(){
+  const f=(av.q||'').toLowerCase(),L=state.audit.filter(a=>!f||(a.user+a.accion+a.detalle).toLowerCase().includes(f));
+  $('#atab').innerHTML=`<div class="grid lg:grid-cols-3 gap-5"><section class="bg-white rounded-2xl border border-slate-200 p-5 h-fit"><h2 class="font-bold mb-1">✏️ Ajustar saldo de un recibo</h2><p class="text-xs text-slate-500 mb-3">Solo Directiva. Queda registrado con usuario, hora y motivo.</p>
+    <label class="text-sm font-semibold">Acometida</label><input id="ajA" oninput="ajLookup()" placeholder="Ej. 108-1" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="text-sm font-semibold">Recibo pendiente</label><select id="ajR" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><option value="">— ingrese acometida —</option></select>
+    <label class="text-sm font-semibold">Nuevo monto ($)</label><input id="ajM" type="number" step="0.01" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="text-sm font-semibold">Motivo</label><textarea id="ajT" rows="2" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"></textarea>
+    <button onclick="ajSave()" class="w-full py-3.5 rounded-xl bg-slate-900 text-white font-bold">Guardar ajuste</button></section>
+   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2"><div class="flex flex-wrap justify-between gap-2 mb-3"><h2 class="font-bold text-lg">Bitácora de auditoría</h2><input value="${av.q||''}" oninput="av.q=this.value;audList()" placeholder="🔍 Filtrar usuario o acción…" class="border rounded-xl px-3 py-2 text-sm"></div><div id="audList" class="max-h-[600px] overflow-y-auto"></div></section></div>`;audList();
+}
+function audList(){const f=(av.q||'').toLowerCase(),L=state.audit.filter(a=>!f||(a.user+a.accion+a.detalle).toLowerCase().includes(f));
+  $('#audList').innerHTML=L.map(a=>`<div class="border-l-4 ${a.nivel==='alto'?'border-red-400 bg-red-50/50':'border-slate-200'} pl-3 py-2 mb-2 rounded-r"><div class="flex flex-wrap justify-between text-xs text-slate-500"><span>${a.ts}</span><span>${a.user}</span></div><div class="text-sm"><b>${a.accion}</b> — ${a.detalle}</div></div>`).join('')||'<div class="text-slate-400 text-sm">Sin resultados</div>'}
+function ajLookup(){const a=acoMap[$('#ajA').value.trim()],s=$('#ajR');s.innerHTML=a?recsOf(a.id).filter(r=>!r.pagado&&!r.conv).map(r=>`<option value="${r.id}">${MESES[r.periodo]} · ${fmt(r.monto)}</option>`).join('')||'<option value="">Sin recibos pendientes</option>':'<option value="">— acometida no encontrada —</option>'}
+function ajSave(){const r=recById[$('#ajR').value],nm=parseFloat($('#ajM').value),mot=esc($('#ajT').value.trim());
+  if(!r||isNaN(nm)||nm<0||mot.length<5){toast('⚠️ Complete acometida, recibo, nuevo monto y motivo');return}
+  const old=r.monto;r.monto=round2(nm);audit('Modificó saldo',`Acom ${r.aco} · ${MESES[r.periodo]}: ${fmt(old)} → ${fmt(nm)} · Motivo: ${mot}`,'alto');toast('✅ Ajuste aplicado y registrado en auditoría');aAud()}
+
+/* ---- Cierre anual con ventana de 3 años ---- */
+function aCierre(){
+  const prot=state.acometidas.filter(a=>moraOf(a.id)>0),cv=state.convenios.filter(c=>c.estado==='Vigente').length,P=ac.purged;
+  const yrs=[[2023,P?'Purgado (en respaldo)':'Fuera de ventana · a purgar'],[2024,'En ventana'],[2025,'En ventana'],[2026,'Año en curso · cierre']];
+  const chk=(ok,t)=>`<li class="flex gap-2 text-sm"><span>${ok?'✅':'⬜'}</span><span class="${ok?'':'text-slate-500'}">${t}</span></li>`;
+  $('#atab').innerHTML=`<section class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+  <div class="mb-4"><h2 class="font-bold text-xl">🗄️ Cierre anual y respaldo</h2><p class="text-sm text-slate-500 max-w-3xl">Ventana deslizante de <b>3 años</b>: al cerrar 2026 se conservan 2024, 2025 y 2026. El año 2023 se purga <b>solo después</b> de descargar su respaldo y <b>únicamente el histórico ya pagado</b>.</p></div>
+  <div class="grid grid-cols-4 gap-2 mb-2">${yrs.map(([y,l])=>{const out=y===2023;return `<div class="rounded-xl p-4 text-center border-2 ${out&&P?'border-dashed border-slate-300 bg-slate-50 text-slate-400':out?'border-red-300 bg-red-50':y===2026?'border-sky-400 bg-sky-50':'border-emerald-300 bg-emerald-50'}"><div class="text-2xl font-extrabold">${y}</div><div class="text-xs font-semibold mt-1">${l}</div></div>`}).join('')}</div>
+  <div class="text-xs text-slate-500 mb-6">${P?'Ventana actual: 2024 – 2026. El próximo cierre (2027) purgará 2024.':'← sale de la ventana'}</div>
+  <div class="grid lg:grid-cols-3 gap-4"><div class="rounded-2xl border p-4 ${ac.stage>=2?'border-emerald-300 bg-emerald-50':'border-slate-200'}"><div class="font-bold mb-1">Paso 1 · Generar respaldo ${ac.stage>=2?'✅':''}</div>
+    <p class="text-sm text-slate-500 mb-3">Recibos, pagos, libro diario, lecturas y fotos de 2023 en PDF + ZIP.</p>
+    ${ac.stage===0?`<button onclick="runBackup()" class="w-full py-3 rounded-xl bg-sky-600 text-white font-bold">Generar respaldo 2023</button>`:ac.stage===1?`<div class="h-4 bg-slate-200 rounded-full overflow-hidden"><div class="h-full bg-sky-500 transition-all" style="width:${ac.prog}%"></div></div><div class="text-xs mt-1 text-slate-500">Empaquetando… ${ac.prog}%</div>`:
+    `<div class="text-sm text-emerald-700 font-semibold mb-2">Respaldo listo · 12,480 recibos · 38 MB</div><div class="flex gap-2"><button onclick="dl('PDF')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ PDF</button><button onclick="dl('ZIP')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ ZIP</button></div><div class="text-xs mt-2 ${ac.dl?'text-emerald-700':'text-amber-700'}">${ac.dl?'✓ Descarga registrada':'Descargue al menos un archivo para continuar'}</div>`}</div>
+   <div class="rounded-2xl border border-slate-200 p-4"><div class="font-bold mb-1">Paso 2 · Qué se purga y qué no</div>
+    <div class="text-sm mb-2">🗑️ <b>Se purga:</b> 12,480 recibos 2023 ya pagados</div><p class="text-sm text-slate-500 mb-1">🔒 <b>Nunca se purga:</b></p>
+    <ul class="text-sm space-y-1"><li>• <b>${prot.length}</b> acometidas con mora pendiente</li><li>• <b>${cv}</b> convenios de pago vigentes</li><li>• Cierres anuales y balances históricos</li><li>• Bitácora de auditoría</li></ul></div>
+   <div class="rounded-2xl border p-4 ${P?'border-emerald-300 bg-emerald-50':'border-slate-200'}"><div class="font-bold mb-1">Paso 3 · Purgar 2023 ${P?'✅':''}</div>
+    ${P?`<p class="text-sm text-emerald-700 font-semibold">Purga completada. La ventana se deslizó a 2024–2026.</p><button onclick="resetCierre()" class="mt-3 text-xs underline text-slate-500">Reiniciar demo</button>`:
+    `<ul class="space-y-1 mb-3">${chk(!state.caja.abierta,'Caja del día cerrada con corte (recomendado)')}${chk(true,'Libro diario conciliado')}${chk(ac.dl,'Respaldo descargado')}</ul>
+     <label class="flex items-start gap-2 text-sm mb-3"><input type="checkbox" ${ac.chk?'checked':''} ${ac.dl?'':'disabled'} onchange="ac.chk=this.checked;aCierre()" class="mt-1 w-5 h-5"> Verifiqué que el respaldo abre correctamente.</label>
+     <button ${ac.dl&&ac.chk?'':'disabled'} onclick="purgeModal()" class="w-full py-3 rounded-xl font-bold text-white ${ac.dl&&ac.chk?'bg-red-600 hover:bg-red-700':'bg-slate-300'}">🗑️ Purgar año 2023</button>`}</div></div>
+  <details class="mt-5 text-sm"><summary class="cursor-pointer text-sky-700 font-semibold">Ver cuentas protegidas (${prot.length})</summary><div class="max-h-48 overflow-y-auto mt-2 divide-y">${prot.slice(0,80).map(a=>`<div class="py-1 flex justify-between"><span>${a.id} · ${a.nombre}</span><b>${moraOf(a.id)} m. · ${fmt(sum(unpaidPrev(a.id).map(r=>r.monto)))}</b></div>`).join('')}</div></details></section>`;
+}
+function runBackup(){ac.stage=1;ac.prog=0;aCierre();const t=setInterval(()=>{ac.prog+=10;if(ac.prog>=100){clearInterval(t);ac.stage=2}if(role==='admin'&&av.tab==='cierre')aCierre()},250)}
+function dl(t){ac.dl=true;audit('Descarga de respaldo',`respaldo_2023.${t.toLowerCase()} descargado`);toast('⬇ Descargando respaldo_2023.'+t.toLowerCase()+' (simulado)');aCierre()}
+function purgeModal(){modal(`<h3 class="text-xl font-bold mb-2">¿Purgar el año 2023?</h3><p class="text-sm text-slate-600 mb-4">Se eliminarán de la base en línea los recibos <b>pagados</b> de 2023. Cuentas con mora, convenios vigentes y cierres históricos <b>no</b> se tocan.</p>
+  <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="ac.purged=true;audit('Purga anual','Año 2023 purgado (solo histórico pagado) tras respaldo','alto');closeModal();toast('✅ Año 2023 purgado');aCierre()" class="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold">Sí, purgar</button></div>`)}
+function resetCierre(){Object.assign(ac,{stage:0,prog:0,dl:false,chk:false,purged:false});aCierre()}
 
 /* ============================ INICIO ============================ */
-$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 renderNav();renderView();
 </script>
 </body>
