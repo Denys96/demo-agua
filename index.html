@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agua Viva · Prototipo de demostración</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .mono{font-family:"Courier New",ui-monospace,monospace}
+  .ticket{background:#fff;color:#000;padding:14px 12px 22px;box-shadow:0 2px 10px rgba(0,0,0,.18);
+    -webkit-mask:linear-gradient(#000 0 0) top/100% calc(100% - 8px) no-repeat,
+      conic-gradient(from -45deg at bottom,#0000,#000 1deg 89deg,#0000 90deg) bottom/12px 8px repeat-x;
+            mask:linear-gradient(#000 0 0) top/100% calc(100% - 8px) no-repeat,
+      conic-gradient(from -45deg at bottom,#0000,#000 1deg 89deg,#0000 90deg) bottom/12px 8px repeat-x}
+  .dash{border-top:1px dashed #000;margin:6px 0}
+  .fade{animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  input:focus,select:focus{outline:none;box-shadow:0 0 0 3px rgba(14,165,233,.35)}
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<!-- Barra de demo: selector de rol -->
+<header class="bg-slate-900 text-white sticky top-0 z-40 shadow">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-sky-500 flex items-center justify-center text-xl">💧</div>
+      <div>
+        <div class="font-bold leading-tight">Asociación de Agua Potable «Agua Viva»</div>
+        <div class="text-xs text-sky-300">Prototipo de demostración · datos ficticios en memoria</div>
+      </div>
+    </div>
+    <nav class="flex gap-2" id="roleNav"></nav>
+  </div>
+</header>
+
+<main id="view" class="max-w-7xl mx-auto p-4 sm:p-6"></main>
+
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 hidden"></div>
+<div id="modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 items-center justify-center p-4"></div>
+
+<script>
+/* ============================ DATOS FICTICIOS ============================ */
+const PERIODO='2026-11';
+const MESES={'2026-07':'Julio 2026','2026-08':'Agosto 2026','2026-09':'Septiembre 2026','2026-10':'Octubre 2026','2026-11':'Noviembre 2026'};
+const PERIODOS_HIST=['2026-07','2026-08','2026-09','2026-10'];
+const SECTORES=['Centro','El Calvario','San José','La Esperanza'];
+const RAW=[
+ [142,'Rosa Elena Martínez','Centro',[['Casa de habitación','MD-48213'],['Local comercial','MD-48214']]],
+ [101,'José Antonio Hernández','Centro',[['Casa de habitación','MD-47001']]],
+ [108,'María Guadalupe Rivas','Centro',[['Casa de habitación','MD-47055']]],
+ [115,'Carlos Alberto Mejía','El Calvario',[['Casa de habitación','MD-47102']]],
+ [120,'Ana Patricia Flores','El Calvario',[['Casa de habitación','MD-47140']]],
+ [127,'Juan Francisco Portillo','San José',[['Casa de habitación','MD-47188']]],
+ [133,'Marta Lidia Cruz','San José',[['Casa de habitación','MD-47231']]],
+ [138,'Roberto Carlos Alvarado','La Esperanza',[['Casa de habitación','MD-47276']]],
+ [150,'Sandra Beatriz Quintanilla','Centro',[['Casa de habitación','MD-47320']]],
+ [156,'Luis Fernando Argueta','El Calvario',[['Casa de habitación','MD-47365']]],
+ [163,'Dora Alicia Menjívar','San José',[['Casa de habitación','MD-47410']]],
+ [171,'Miguel Ángel Orellana','La Esperanza',[['Casa de habitación','MD-47455']]],
+ [178,'Gloria Esperanza Ayala','Centro',[['Casa de habitación','MD-47499']]],
+ [185,'Santos Evelio Pineda','El Calvario',[['Casa de habitación','MD-47542']]],
+ [190,'Blanca Estela Henríquez','San José',[['Casa de habitación','MD-47588']]],
+ [204,'Óscar Armando Rodríguez','La Esperanza',[['Casa de habitación','MD-47631']]],
+ [212,'Teresa de Jesús Lemus','Centro',[['Casa de habitación','MD-47677']]],
+ [219,'Pedro Antonio Zelaya','El Calvario',[['Casa de habitación','MD-47720'],['Finca / riego','MD-47721']]],
+ [230,'Vilma Concepción Ramos','San José',[['Casa de habitación','MD-47766']]],
+ [241,'Héctor Manuel Guardado','La Esperanza',[['Casa de habitación','MD-47810']]],
+];
+// meses adeudados iniciales por acometida
+const MORA_SEED={'142-2':2,'108-1':3,'115-1':1,'127-1':2,'138-1':3,'156-1':1,'171-1':2,'190-1':4,'212-1':1,'219-2':1,'241-1':2};
+
+const state={tarifa:{base:3.00,incl:15,extra:0.40},socios:[],acometidas:[],receipts:[],lecturas:{},nextComp:124};
+let seed=11;const rnd=()=>(seed=(seed*9301+49297)%233280)/233280;
+const calc=(m3,t=state.tarifa)=>{const exM3=Math.max(0,m3-t.incl);const exc=exM3*t.extra;return{base:t.base,exM3,exc,total:t.base+exc}};
+
+RAW.forEach(([num,nombre,sector,acs])=>{
+  state.socios.push({num,nombre,sector});
+  acs.forEach(([dir,serie],i)=>{
+    const id=num+'-'+(i+1), mora=MORA_SEED[id]||0;
+    let acum=1000+Math.floor(rnd()*3500);
+    PERIODOS_HIST.forEach((p,k)=>{
+      const m3=Math.round(7+rnd()*(id==='219-2'?30:20));
+      acum+=m3;
+      state.receipts.push({id:id+'|'+p,aco:id,periodo:p,m3,monto:calc(m3).total,pagado:k<PERIODOS_HIST.length-mora,fechaPago:null});
+    });
+    state.acometidas.push({id,socio:num,nombre,sector,dir,serie,anterior:acum});
+  });
+});
+
+/* ============================ HELPERS ============================ */
+const $=s=>document.querySelector(s);
+const fmt=n=>'$'+Number(n).toFixed(2);
+const acoById=id=>state.acometidas.find(a=>a.id===id);
+const recsOf=id=>state.receipts.filter(r=>r.aco===id).sort((a,b)=>a.periodo.localeCompare(b.periodo));
+const unpaidPrev=id=>state.receipts.filter(r=>r.aco===id&&!r.pagado&&r.periodo<PERIODO);
+const moraOf=id=>unpaidPrev(id).length;
+const nivel=m=>m>=3?'rojo':m===2?'amarillo':'verde';
+const socioMora=num=>Math.max(0,...state.acometidas.filter(a=>a.socio===num).map(a=>moraOf(a.id)));
+const NIV={verde:{bg:'bg-emerald-100',tx:'text-emerald-800',dot:'bg-emerald-500',lbl:'Al día'},
+  amarillo:{bg:'bg-amber-100',tx:'text-amber-800',dot:'bg-amber-400',lbl:'Aviso · 2 meses'},
+  rojo:{bg:'bg-red-100',tx:'text-red-800',dot:'bg-red-500',lbl:'Corte · 3+ meses'}};
+const badge=n=>`<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${NIV[n].bg} ${NIV[n].tx}"><span class="w-2 h-2 rounded-full ${NIV[n].dot}"></span>${NIV[n].lbl}</span>`;
+function toast(msg){const t=$('#toast');t.innerHTML=`<div class="fade bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-medium max-w-sm text-center">${msg}</div>`;t.classList.remove('hidden');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.add('hidden'),3000)}
+function modal(html){const m=$('#modal');m.innerHTML=`<div class="fade bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">${html}</div>`;m.classList.remove('hidden');m.classList.add('flex')}
+function closeModal(){const m=$('#modal');m.classList.add('hidden');m.classList.remove('flex')}
+
+/* ============================ ROLES ============================ */
+let role='fontanero';
+const ROLES=[['fontanero','📱','Fontanero'],['secretaria','🖥️','Secretaria / Cajera'],['admin','📊','Administrador']];
+function setRole(r){role=r;renderNav();renderView()}
+function renderNav(){
+  $('#roleNav').innerHTML=ROLES.map(([k,i,l])=>`<button onclick="setRole('${k}')" class="px-4 py-2.5 rounded-xl text-sm font-semibold transition ${role===k?'bg-sky-500 text-white shadow':'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${i} ${l}</button>`).join('');
+}
+function renderView(){
+  if(role==='fontanero')renderF();else if(role==='secretaria')renderS();else renderA();
+}
+
+/* ============================ FONTANERO (MÓVIL) ============================ */
+const fv={sector:'Todos',q:'',sel:null,actual:'',foto:false,width:80};
+function renderF(){
+  $('#view').innerHTML=`
+  <div class="mb-4 text-center text-sm text-slate-500 hidden sm:block">Vista móvil del fontanero — así se vería en el celular durante la ruta de lectura.</div>
+  <div class="w-full sm:max-w-[400px] mx-auto sm:border-[10px] sm:border-slate-800 sm:rounded-[2.5rem] bg-slate-50 sm:h-[790px] overflow-y-auto shadow-xl relative" id="phone">
+    <div id="fbody"></div>
+  </div>`;
+  fv.sel?renderFDetail():renderFList();
+}
+function renderFList(){
+  const done=Object.keys(state.lecturas).length,total=state.acometidas.length;
+  $('#fbody').innerHTML=`
+  <div class="bg-sky-600 text-white p-4 sticky top-0 z-10">
+    <div class="text-xs text-sky-100">Ruta de lectura · ${MESES[PERIODO]}</div>
+    <div class="flex items-end justify-between"><div class="text-xl font-bold">Hola, Fontanero 👷</div><div class="text-sm font-semibold">${done}/${total} leídas</div></div>
+    <div class="h-2 bg-sky-800/50 rounded-full mt-2 overflow-hidden"><div class="h-full bg-white rounded-full transition-all" style="width:${done/total*100}%"></div></div>
+    <input id="fq" value="${fv.q}" oninput="fv.q=this.value;fListItems()" placeholder="🔍 Socio # o N° de serie del medidor" class="mt-3 w-full rounded-xl px-4 py-3.5 text-slate-800 text-base" inputmode="search">
+    <div class="text-[11px] text-sky-100 mt-1">Prueba con <b>142</b> (2 acometidas) o <b>MD-47055</b></div>
+  </div>
+  <div class="px-3 pt-3 flex gap-2 overflow-x-auto pb-1">
+    ${['Todos',...SECTORES].map(s=>`<button onclick="fv.sector='${s}';renderFList()" class="shrink-0 px-4 py-2.5 rounded-full text-sm font-semibold ${fv.sector===s?'bg-sky-600 text-white':'bg-white border border-slate-300 text-slate-600'}">${s}</button>`).join('')}
+  </div>
+  <div id="flist" class="p-3 space-y-3"></div>`;
+  fListItems();
+}
+function fListItems(){
+  const q=fv.q.trim().toLowerCase().replace('#','');
+  const L=state.acometidas.filter(a=>(fv.sector==='Todos'||a.sector===fv.sector)&&(!q||a.id.toLowerCase().startsWith(q)||a.serie.toLowerCase().includes(q)));
+  $('#flist').innerHTML=L.length?L.map(a=>{
+    const m=moraOf(a.id),n=nivel(m),leida=state.lecturas[a.id];
+    return `<button onclick="openF('${a.id}')" class="w-full text-left bg-white rounded-2xl p-4 shadow-sm border border-slate-200 active:scale-[.99] transition flex items-center gap-3">
+      <div class="w-16 h-16 rounded-xl bg-sky-50 text-sky-700 flex flex-col items-center justify-center shrink-0"><div class="text-[10px] uppercase">Acom.</div><div class="font-bold text-lg leading-none">${a.id}</div></div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold truncate">${a.nombre}</div>
+        <div class="text-xs text-slate-500 truncate">${a.dir} · ${a.sector}</div>
+        <div class="text-xs text-slate-400 mono">${a.serie}</div>
+      </div>
+      <div class="text-right shrink-0 space-y-1">
+        ${leida?'<div class="text-emerald-600 font-bold text-sm">✓ Leída</div>':'<div class="text-slate-400 text-sm">Pendiente</div>'}
+        ${m>=2?`<div class="inline-block w-3 h-3 rounded-full ${NIV[n].dot}"></div>`:''}
+      </div></button>`}).join(''):`<div class="text-center text-slate-400 py-10">Sin resultados</div>`;
+}
+function openF(id){fv.sel=id;fv.actual=state.lecturas[id]?String(state.lecturas[id].actual):'';fv.foto=state.lecturas[id]?state.lecturas[id].foto:false;renderFDetail()}
+function renderFDetail(){
+  const a=acoById(fv.sel),m=moraOf(a.id);
+  $('#fbody').innerHTML=`
+  <div class="bg-sky-600 text-white p-4 sticky top-0 z-10 flex items-center gap-3">
+    <button onclick="fv.sel=null;renderFList()" class="bg-white/20 rounded-xl px-4 py-3 font-bold text-lg">←</button>
+    <div><div class="text-xs text-sky-100">Acometida</div><div class="text-xl font-bold">${a.id} · ${a.nombre.split(' ').slice(0,2).join(' ')}</div></div>
+  </div>
+  <div class="p-4 space-y-4">
+    <div class="bg-white rounded-2xl p-4 border border-slate-200 text-sm space-y-1">
+      <div><b>${a.nombre}</b> · Socio #${a.socio}</div>
+      <div class="text-slate-500">${a.dir} · Sector ${a.sector}</div>
+      <div class="text-slate-500">Medidor: <span class="mono">${a.serie}</span></div>
+      ${m>=2?`<div class="mt-2">${badge(nivel(m))}</div>`:''}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div class="bg-slate-200 rounded-2xl p-4"><div class="text-xs text-slate-500">Lectura anterior</div><div class="text-3xl font-bold mono">${a.anterior}</div><div class="text-xs text-slate-500">m³ · Oct 2026</div></div>
+      <div class="bg-white rounded-2xl p-4 border-2 border-sky-400"><label class="text-xs text-sky-700 font-semibold">Lectura actual</label>
+        <input id="fact" type="number" inputmode="numeric" value="${fv.actual}" oninput="fv.actual=this.value;fCalc()" placeholder="0000" class="w-full text-3xl font-bold mono bg-transparent"></div>
+    </div>
+    <button id="fphoto" onclick="fv.foto=!fv.foto;fCalc()" class="w-full py-4 rounded-2xl font-semibold text-base border-2 border-dashed"></button>
+    <div id="calcArea"></div>
+  </div>`;
+  fCalc();
+}
+function fCalc(){
+  const a=acoById(fv.sel);if(!a)return;
+  // foto
+  const fp=$('#fphoto');
+  fp.className='w-full py-4 rounded-2xl font-semibold text-base border-2 '+(fv.foto?'border-emerald-400 bg-emerald-50 text-emerald-700 border-solid':'border-dashed border-slate-400 bg-white text-slate-600');
+  fp.innerHTML=fv.foto?'✅ Foto de respaldo guardada <span class="text-xs font-normal">(toca para repetir)</span>':'📷 Tomar foto de respaldo del medidor';
+  const raw=fv.actual,act=parseInt(raw,10),has=raw!=='';
+  const area=$('#calcArea');
+  if(!has){area.innerHTML=`<div class="text-center text-slate-400 text-sm py-4">Ingrese la lectura actual para calcular el consumo.</div>`;return}
+  if(act<a.anterior){area.innerHTML=`<div class="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-4 text-sm font-semibold">⚠️ La lectura actual no puede ser menor que la anterior (${a.anterior}).</div>`;return}
+  const m3=act-a.anterior,c=calc(m3),hist=recsOf(a.id),avg=hist.reduce((s,r)=>s+r.m3,0)/hist.length;
+  const arrears=unpaidPrev(a.id),arrAmt=arrears.reduce((s,r)=>s+r.monto,0),mm=arrears.length;
+  area.innerHTML=`
+  ${m3>avg*2&&m3>20?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-3 text-sm mb-3">⚠️ Consumo inusual: más del doble del promedio (${avg.toFixed(0)} m³). Verifique la lectura o posible fuga.</div>`:''}
+  <div class="bg-white rounded-2xl p-4 border border-slate-200 space-y-2">
+    <div class="flex justify-between items-end"><span class="text-slate-500">Consumo del mes</span><span class="text-3xl font-bold text-sky-700">${m3} <span class="text-base">m³</span></span></div>
+    <div class="border-t pt-2 text-sm space-y-1">
+      <div class="flex justify-between"><span>Cuota fija (hasta ${state.tarifa.incl} m³)</span><b>${fmt(c.base)}</b></div>
+      <div class="flex justify-between"><span>Excedente ${c.exM3} m³ × ${fmt(state.tarifa.extra)}</span><b>${fmt(c.exc)}</b></div>
+      <div class="flex justify-between text-base pt-1 border-t"><span class="font-semibold">Total del mes</span><b class="text-sky-700">${fmt(c.total)}</b></div>
+      ${mm?`<div class="flex justify-between text-red-600"><span>Saldo anterior (${mm} ${mm>1?'meses':'mes'})</span><b>${fmt(arrAmt)}</b></div>`:''}
+    </div>
+  </div>
+  <div class="mt-4">
+    <div class="flex items-center justify-between mb-2"><div class="font-semibold">🧾 Vista previa del ticket</div>
+      <div class="flex bg-slate-200 rounded-xl p-1 text-sm font-semibold">
+        <button onclick="fv.width=58;fCalc()" class="px-3 py-1.5 rounded-lg ${fv.width===58?'bg-white shadow':''}">58 mm</button>
+        <button onclick="fv.width=80;fCalc()" class="px-3 py-1.5 rounded-lg ${fv.width===80?'bg-white shadow':''}">80 mm</button></div></div>
+    <div class="bg-slate-300 rounded-2xl p-4 flex justify-center overflow-x-auto">${ticketHTML(a,act,m3,c,arrAmt,mm)}</div>
+  </div>
+  <button ${fv.foto?'':'disabled'} onclick="fSave()" class="mt-4 w-full py-5 rounded-2xl text-lg font-bold text-white ${fv.foto?'bg-emerald-600 active:bg-emerald-700':'bg-slate-400'} shadow">🖨️ Guardar lectura e imprimir</button>
+  ${fv.foto?'':'<div class="text-center text-xs text-slate-500 mt-2">Toma la foto de respaldo para poder guardar.</div>'}
+  <div class="h-6"></div>`;
+}
+function ticketHTML(a,act,m3,c,arrAmt,mm){
+  const w=fv.width===58?224:300,sm=fv.width===58?'text-[11px]':'text-[13px]';
+  const row=(l,r,b)=>`<div class="flex justify-between gap-2 ${b?'font-bold':''}"><span>${l}</span><span>${r}</span></div>`;
+  const total=c.total+arrAmt;
+  const alert=mm>=3?`<div class="dash"></div><div class="text-center font-bold border-2 border-black p-1.5 my-1 bg-black text-white">*** ORDEN DE CORTE ***<div class="font-normal text-[0.9em]">Adeuda ${mm} meses. El servicio será suspendido si no cancela antes del 30/11/2026.</div></div>`
+   :mm===2?`<div class="dash"></div><div class="text-center font-bold border-2 border-black p-1.5 my-1">⚠ AVISO DE MORA ⚠<div class="font-normal text-[0.9em]">Adeuda 2 meses. Evite el corte pagando antes del 30/11/2026.</div></div>`:'';
+  let qr='',r=5;for(let y=0;y<13;y++)for(let x=0;x<13;x++){r=(r*9301+49297)%233280;if(r%2||(x<3&&y<3)||(x>9&&y<3)||(x<3&&y>9))qr+=`<rect x="${x}" y="${y}" width="1" height="1"/>`}
+  return `<div class="ticket mono ${sm}" style="width:${w}px">
+    <div class="text-center font-bold leading-tight">ASOCIACIÓN DE AGUA POTABLE<br>«AGUA VIVA»</div>
+    <div class="text-center text-[0.85em]">Recibo de consumo · ${MESES[PERIODO]}</div>
+    <div class="dash"></div>
+    ${row('Socio:','#'+a.socio)}${row('Acometida:',a.id)}
+    <div>${a.nombre}</div><div class="text-[0.9em]">${a.dir} · ${a.sector}</div>
+    ${row('Medidor:',a.serie)}${row('Fecha:','16/11/2026')}
+    <div class="dash"></div>
+    ${row('Lect. anterior:',a.anterior)}${row('Lect. actual:',act)}${row('Consumo:',m3+' m³',1)}
+    <div class="dash"></div>
+    ${row('Cuota fija ('+state.tarifa.incl+'m³):',fmt(c.base))}
+    ${row('Excedente '+c.exM3+'m³:',fmt(c.exc))}
+    ${row('Total del mes:',fmt(c.total),1)}
+    ${mm?row('Saldo anterior ('+mm+'m):',fmt(arrAmt)):''}
+    <div class="dash"></div>
+    <div class="flex justify-between font-bold text-[1.15em]"><span>TOTAL A PAGAR</span><span>${fmt(total)}</span></div>
+    <div class="text-[0.85em]">Vence: 30/11/2026</div>
+    ${alert}
+    <div class="dash"></div>
+    <svg viewBox="0 0 13 13" class="w-16 h-16 mx-auto" fill="#000">${qr}</svg>
+    <div class="text-center text-[0.8em] mt-1">Pague en oficina de lun a vie<br>¡Gracias por cuidar el agua!</div>
+  </div>`;
+}
+function fSave(){
+  const a=acoById(fv.sel),act=parseInt(fv.actual,10),m3=act-a.anterior,c=calc(m3);
+  state.lecturas[a.id]={actual:act,m3,foto:fv.foto};
+  state.receipts=state.receipts.filter(r=>r.id!==a.id+'|'+PERIODO);
+  state.receipts.push({id:a.id+'|'+PERIODO,aco:a.id,periodo:PERIODO,m3,monto:c.total,pagado:false,fechaPago:null});
+  toast('✅ Lectura guardada · enviando ticket a impresora (simulado)');
+  fv.sel=null;fv.actual='';fv.foto=false;renderFList();
+}
+
+/* ============================ SECRETARIA / CAJERA ============================ */
+const sv={q:'',filtro:'todos',sel:142,aco:null};
+function renderS(){
+  const cnt={verde:0,amarillo:0,rojo:0};state.socios.forEach(s=>cnt[nivel(socioMora(s.num))]++);
+  const card=(k,t,sub)=>`<button onclick="sv.filtro='${k}';sTable()" class="text-left rounded-2xl p-5 border-2 transition ${NIV[k]?.bg||'bg-white'} ${sv.filtro===k?'border-slate-800':'border-transparent'} shadow-sm">
+     <div class="flex items-center gap-2"><span class="w-4 h-4 rounded-full ${NIV[k].dot}"></span><span class="font-semibold ${NIV[k].tx}">${t}</span></div>
+     <div class="text-4xl font-extrabold mt-2 ${NIV[k].tx}">${cnt[k]}</div><div class="text-sm ${NIV[k].tx} opacity-80">${sub}</div></button>`;
+  $('#view').innerHTML=`
+  <h1 class="text-2xl font-bold mb-1">Caja y atención al socio</h1>
+  <p class="text-slate-500 mb-4 text-sm">Busque socios, revise recibos y registre cobros. Semáforo de mora actualizado en tiempo real.</p>
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+    ${card('verde','Al día','0–1 mes de atraso')}${card('amarillo','Aviso de mora','2 meses sin pagar')}${card('rojo','Corte de servicio','3+ meses sin pagar')}
+    <button onclick="sv.filtro='todos';sTable()" class="rounded-2xl p-5 bg-white border-2 ${sv.filtro==='todos'?'border-slate-800':'border-transparent'} text-left shadow-sm"><div class="font-semibold text-slate-600">Todos los socios</div><div class="text-4xl font-extrabold mt-2">${state.socios.length}</div><div class="text-sm text-slate-500">de 1,000+ en producción</div></button>
+  </div>
+  <div class="grid lg:grid-cols-5 gap-5">
+    <section class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+      <input value="${sv.q}" oninput="sv.q=this.value;sTable()" placeholder="🔍 Buscar por N° de socio o nombre…" class="w-full border border-slate-300 rounded-xl px-4 py-3.5 text-base">
+      <div id="stable" class="mt-3 max-h-[520px] overflow-y-auto divide-y"></div>
+    </section>
+    <section class="lg:col-span-3" id="sdetail"></section>
+  </div>`;
+  sTable();sDetail();
+}
+function sTable(){
+  const q=sv.q.trim().toLowerCase().replace('#','');
+  let L=state.socios.filter(s=>(!q||String(s.num).startsWith(q)||s.nombre.toLowerCase().includes(q))&&(sv.filtro==='todos'||nivel(socioMora(s.num))===sv.filtro));
+  $('#stable').innerHTML=L.length?L.map(s=>{const n=nivel(socioMora(s.num)),k=state.acometidas.filter(a=>a.socio===s.num).length;
+    return `<button onclick="sv.sel=${s.num};sv.aco=null;sTable();sDetail()" class="w-full text-left py-3 px-2 flex items-center gap-3 rounded-lg hover:bg-slate-50 ${sv.sel===s.num?'bg-sky-50':''}">
+      <span class="w-3.5 h-3.5 rounded-full ${NIV[n].dot} shrink-0"></span>
+      <div class="flex-1 min-w-0"><div class="font-semibold truncate">#${s.num} · ${s.nombre}</div><div class="text-xs text-slate-500">${s.sector} · ${k} acometida${k>1?'s':''}</div></div>
+      </button>`}).join(''):'<div class="text-center text-slate-400 py-8">Sin resultados</div>';
+  // actualizar tarjetas activas de filtro sin re-render completo
+  document.querySelectorAll('#view button.border-2').forEach(b=>{});
+}
+function sDetail(){
+  const s=state.socios.find(x=>x.num===sv.sel),el=$('#sdetail');
+  if(!s){el.innerHTML='<div class="bg-white rounded-2xl p-10 text-center text-slate-400">Seleccione un socio</div>';return}
+  const acs=state.acometidas.filter(a=>a.socio===s.num);if(!sv.aco||!acs.find(a=>a.id===sv.aco))sv.aco=acs[0].id;
+  const a=acoById(sv.aco),recs=recsOf(a.id).slice().reverse(),pend=recs.filter(r=>!r.pagado),m=moraOf(a.id),tot=pend.reduce((x,r)=>x+r.monto,0);
+  el.innerHTML=`<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 fade">
+    <div class="flex flex-wrap justify-between gap-3 items-start">
+      <div><div class="text-xs text-slate-500">Socio #${s.num} · Sector ${s.sector}</div><div class="text-2xl font-bold">${s.nombre}</div></div>${badge(nivel(socioMora(s.num)))}</div>
+    <div class="flex gap-2 mt-4">${acs.map(x=>`<button onclick="sv.aco='${x.id}';sDetail()" class="px-4 py-2.5 rounded-xl font-semibold text-sm ${x.id===a.id?'bg-sky-600 text-white':'bg-slate-100 text-slate-600'}">Acometida ${x.id} <span class="font-normal opacity-80">· ${x.dir}</span></button>`).join('')}</div>
+    ${m>=3?`<div class="mt-4 bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm font-semibold">🔴 ${m} meses en mora: corresponde orden de corte de servicio.</div>`
+     :m===2?`<div class="mt-4 bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-3 text-sm font-semibold">🟡 2 meses en mora: aviso de cobro. Al tercer mes se ordena el corte.</div>`:''}
+    <table class="w-full mt-4 text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Periodo</th><th>Consumo</th><th>Monto</th><th>Estado</th><th></th></tr></thead>
+    <tbody>${recs.map(r=>`<tr class="border-b last:border-0"><td class="py-3 font-medium">${MESES[r.periodo]}</td><td>${r.m3} m³</td><td class="font-semibold">${fmt(r.monto)}</td>
+      <td>${r.pagado?`<span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Pagado${r.fechaPago?' · '+r.fechaPago:''}</span>`:'<span class="px-2.5 py-1 rounded-full bg-red-100 text-red-800 text-xs font-semibold">Pendiente</span>'}</td>
+      <td class="text-right">${r.pagado?'':`<button onclick="payModal(['${r.id}'])" class="px-4 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-700">Cobrar</button>`}</td></tr>`).join('')}</tbody></table>
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3 bg-slate-50 rounded-xl p-4">
+      <div><div class="text-xs text-slate-500">Total pendiente de esta acometida</div><div class="text-3xl font-extrabold ${tot?'text-red-600':'text-emerald-600'}">${fmt(tot)}</div></div>
+      <button ${tot?'':'disabled'} onclick="payModal(${JSON.stringify(pend.map(r=>r.id)).replace(/"/g,"'")})" class="px-6 py-4 rounded-xl text-lg font-bold text-white ${tot?'bg-emerald-600 hover:bg-emerald-700':'bg-slate-300'}">💵 Registrar cobro total</button></div>
+  </div>`;
+}
+function payModal(ids){
+  const rs=ids.map(id=>state.receipts.find(r=>r.id===id)),tot=rs.reduce((s,r)=>s+r.monto,0),a=acoById(rs[0].aco);
+  window._pay=ids;
+  modal(`<h3 class="text-xl font-bold mb-1">Registrar cobro</h3><div class="text-sm text-slate-500 mb-3">Acometida ${a.id} · ${a.nombre}</div>
+   <div class="bg-slate-50 rounded-xl p-3 text-sm space-y-1 mb-3">${rs.map(r=>`<div class="flex justify-between"><span>${MESES[r.periodo]}</span><b>${fmt(r.monto)}</b></div>`).join('')}
+   <div class="flex justify-between border-t pt-2 text-lg"><span>Total</span><b>${fmt(tot)}</b></div></div>
+   <label class="text-sm font-semibold">Forma de pago</label>
+   <select class="w-full border rounded-xl px-3 py-3 mt-1 mb-4"><option>Efectivo</option><option>Transferencia</option></select>
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button>
+   <button onclick="doPay()" class="flex-1 py-3.5 rounded-xl bg-emerald-600 text-white font-bold">Confirmar cobro</button></div>`);
+}
+function doPay(){
+  const hoy='16/11/2026';
+  window._pay.forEach(id=>{const r=state.receipts.find(x=>x.id===id);r.pagado=true;r.fechaPago=hoy});
+  closeModal();toast(`✅ Cobro registrado · Comprobante N° ${String(state.nextComp++).padStart(6,'0')}`);renderS();
+}
+
+/* ============================ ADMINISTRADOR ============================ */
+const ac={stage:0,prog:0,dl:false,chk:false,purged:false};
+function renderA(){
+  const oct=state.receipts.filter(r=>r.periodo==='2026-10'),fact=oct.reduce((s,r)=>s+r.monto,0),cob=oct.filter(r=>r.pagado).reduce((s,r)=>s+r.monto,0);
+  const cartera=state.receipts.filter(r=>!r.pagado&&r.periodo<PERIODO).reduce((s,r)=>s+r.monto,0);
+  const cnt={verde:0,amarillo:0,rojo:0};state.socios.forEach(s=>cnt[nivel(socioMora(s.num))]++);
+  const sec=SECTORES.map(s=>({s,m3:oct.filter(r=>acoById(r.aco).sector===s).reduce((x,r)=>x+r.m3,0)})),mx=Math.max(...sec.map(x=>x.m3));
+  const kpi=(l,v,sub,c='text-slate-900')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold ${c} mt-1">${v}</div><div class="text-xs text-slate-400 mt-1">${sub}</div></div>`;
+  $('#view').innerHTML=`
+  <h1 class="text-2xl font-bold mb-1">Panel de administración</h1>
+  <p class="text-slate-500 mb-5 text-sm">Resumen general, tarifas y cierre anual con respaldo.</p>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${kpi('Socios activos',state.socios.length,'muestra demo (producción: 1,000+)')}
+    ${kpi('Acometidas',state.acometidas.length,'medidores instalados')}
+    ${kpi('Cobrado Oct 2026',fmt(cob),'de '+fmt(fact)+' facturado','text-emerald-600')}
+    ${kpi('Cartera en mora',fmt(cartera),`🟡 ${cnt.amarillo} aviso · 🔴 ${cnt.rojo} corte`,'text-red-600')}
+  </div>
+  <div class="grid lg:grid-cols-2 gap-5 mb-6">
+    <section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <h2 class="font-bold text-lg mb-3">⚙️ Configuración de tarifa</h2>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="text-xs font-semibold text-slate-500">Cuota fija ($)</label><input id="tBase" type="number" step="0.25" value="${state.tarifa.base}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
+        <div><label class="text-xs font-semibold text-slate-500">m³ incluidos</label><input id="tIncl" type="number" value="${state.tarifa.incl}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
+        <div><label class="text-xs font-semibold text-slate-500">$ por m³ extra</label><input id="tExtra" type="number" step="0.05" value="${state.tarifa.extra}" oninput="tPreview()" class="w-full border rounded-xl px-3 py-3 text-lg font-bold"></div>
+      </div>
+      <div class="mt-4 bg-sky-50 rounded-xl p-4 text-sm">
+        <div class="flex items-center gap-2">Simulador: consumo de <input id="tSim" type="number" value="22" oninput="tPreview()" class="w-20 border rounded-lg px-2 py-1 font-bold"> m³ →</div>
+        <div id="tOut" class="mt-1 text-lg font-bold text-sky-800"></div></div>
+      <button onclick="saveTarifa()" class="mt-4 w-full py-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold">Guardar tarifa</button>
+      <p class="text-xs text-slate-400 mt-2">Aplica a lecturas nuevas; los recibos ya emitidos no cambian.</p>
+    </section>
+    <section class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <h2 class="font-bold text-lg mb-3">💧 Consumo por sector · Oct 2026</h2>
+      <div class="space-y-3">${sec.map(x=>`<div><div class="flex justify-between text-sm"><span class="font-medium">${x.s}</span><span class="text-slate-500">${x.m3} m³</span></div>
+        <div class="h-5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-sky-400 to-sky-600 rounded-full" style="width:${x.m3/mx*100}%"></div></div></div>`).join('')}</div>
+      <div class="mt-5 grid grid-cols-3 gap-2 text-center text-sm">
+        <div class="rounded-xl bg-emerald-100 text-emerald-800 p-3"><b class="text-2xl">${cnt.verde}</b><div>Al día</div></div>
+        <div class="rounded-xl bg-amber-100 text-amber-800 p-3"><b class="text-2xl">${cnt.amarillo}</b><div>Aviso</div></div>
+        <div class="rounded-xl bg-red-100 text-red-800 p-3"><b class="text-2xl">${cnt.rojo}</b><div>Corte</div></div></div>
+    </section>
+  </div>
+  <section id="cierre" class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm"></section>`;
+  tPreview();renderCierre();
+}
+function tPreview(){
+  const t={base:+$('#tBase').value||0,incl:+$('#tIncl').value||0,extra:+$('#tExtra').value||0},m=+$('#tSim').value||0,c=calc(m,t);
+  $('#tOut').textContent=`${fmt(t.base)} + ${c.exM3} m³ × ${fmt(t.extra)} = ${fmt(c.total)}`;
+}
+function saveTarifa(){state.tarifa={base:+$('#tBase').value||0,incl:+$('#tIncl').value||0,extra:+$('#tExtra').value||0};toast('✅ Tarifa actualizada · se usará en la app del fontanero')}
+
+function renderCierre(){
+  const prot=state.acometidas.filter(a=>moraOf(a.id)>0);
+  const yrs=[[2023,'Más antiguo'],[2024,''],[2025,''],[2026,'Año en curso']];
+  const purgedTxt=ac.purged;
+  $('#cierre').innerHTML=`
+  <div class="flex flex-wrap justify-between gap-2 items-start mb-4">
+    <div><h2 class="font-bold text-xl">🗄️ Cierre anual y respaldo</h2>
+    <p class="text-sm text-slate-500 max-w-2xl">Política de retención: se conservan <b>3 años</b> de historial en línea. Al cerrar 2026, el año más viejo (2023) se purga, <b>solo después</b> de descargar su respaldo.</p></div>
+    <span class="px-3 py-1.5 rounded-full bg-sky-100 text-sky-800 text-sm font-semibold">Cierre ejercicio 2026</span></div>
+
+  <div class="grid grid-cols-4 gap-2 mb-6">${yrs.map(([y,l])=>{
+    const old=y===2023,gone=old&&purgedTxt;
+    return `<div class="rounded-xl p-4 text-center border-2 ${gone?'border-dashed border-slate-300 bg-slate-50 text-slate-400':old?'border-red-300 bg-red-50':y===2026?'border-sky-400 bg-sky-50':'border-emerald-300 bg-emerald-50'}">
+      <div class="text-2xl font-extrabold">${y}</div><div class="text-xs font-semibold mt-1">${gone?'Purgado (en respaldo)':old?'A purgar':y===2026?'En curso':'Conservado'}</div></div>`}).join('')}</div>
+
+  <div class="grid lg:grid-cols-3 gap-4">
+    <div class="rounded-2xl border p-4 ${ac.stage>=2?'border-emerald-300 bg-emerald-50':'border-slate-200'}">
+      <div class="font-bold mb-1">Paso 1 · Generar respaldo ${ac.stage>=2?'✅':''}</div>
+      <p class="text-sm text-slate-500 mb-3">Recibos, lecturas, fotos de respaldo y pagos de 2023 en PDF + ZIP.</p>
+      ${ac.stage===0?`<button onclick="runBackup()" class="w-full py-3 rounded-xl bg-sky-600 text-white font-bold">Generar respaldo 2023</button>`:
+        ac.stage===1?`<div class="h-4 bg-slate-200 rounded-full overflow-hidden"><div class="h-full bg-sky-500 transition-all" style="width:${ac.prog}%"></div></div><div class="text-xs mt-1 text-slate-500">Empaquetando… ${ac.prog}%</div>`:
+        `<div class="text-sm text-emerald-700 font-semibold mb-2">Respaldo listo · 12,480 recibos · 38 MB</div>
+         <div class="flex gap-2"><button onclick="dl('PDF')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ PDF</button><button onclick="dl('ZIP')" class="flex-1 py-2.5 rounded-xl bg-white border font-semibold text-sm">⬇ ZIP</button></div>
+         <div class="text-xs mt-2 ${ac.dl?'text-emerald-700':'text-amber-700'}">${ac.dl?'✓ Descarga registrada':'Descargue al menos un archivo para continuar'}</div>`}
+    </div>
+
+    <div class="rounded-2xl border border-slate-200 p-4">
+      <div class="font-bold mb-1">Paso 2 · Protecciones automáticas</div>
+      <p class="text-sm text-slate-500 mb-2">Nunca se purga:</p>
+      <ul class="text-sm space-y-1.5">
+        <li>🔒 <b>${prot.length}</b> acometidas con mora pendiente</li>
+        <li>🔒 Cierres anuales históricos (resúmenes)</li>
+        <li>🔒 Saldos y convenios de pago vigentes</li>
+      </ul>
+      <details class="mt-2 text-xs"><summary class="cursor-pointer text-sky-700 font-semibold">Ver cuentas protegidas</summary>
+        <div class="max-h-40 overflow-y-auto mt-1 divide-y">${prot.map(a=>`<div class="py-1 flex justify-between"><span>${a.id} · ${a.nombre}</span><b>${moraOf(a.id)} m.</b></div>`).join('')}</div></details>
+    </div>
+
+    <div class="rounded-2xl border p-4 ${purgedTxt?'border-emerald-300 bg-emerald-50':'border-slate-200'}">
+      <div class="font-bold mb-1">Paso 3 · Purgar año 2023 ${purgedTxt?'✅':''}</div>
+      ${purgedTxt?`<p class="text-sm text-emerald-700 font-semibold">Purga completada. Se conservan 2024–2026 y las cuentas protegidas.</p>
+         <button onclick="resetCierre()" class="mt-3 text-xs underline text-slate-500">Reiniciar demo</button>`:
+      `<p class="text-sm text-slate-500 mb-3">Acción irreversible. Requiere respaldo descargado.</p>
+       <label class="flex items-start gap-2 text-sm mb-3"><input type="checkbox" ${ac.chk?'checked':''} ${ac.dl?'':'disabled'} onchange="ac.chk=this.checked;renderCierre()" class="mt-1 w-5 h-5"> Verifiqué que el respaldo abre correctamente.</label>
+       <button ${ac.dl&&ac.chk?'':'disabled'} onclick="purgeModal()" class="w-full py-3 rounded-xl font-bold text-white ${ac.dl&&ac.chk?'bg-red-600 hover:bg-red-700':'bg-slate-300'}">🗑️ Purgar año 2023</button>`}
+    </div>
+  </div>`;
+}
+function runBackup(){ac.stage=1;ac.prog=0;renderCierre();const t=setInterval(()=>{ac.prog+=10;if(ac.prog>=100){clearInterval(t);ac.stage=2}if(role==='admin')renderCierre()},250)}
+function dl(t){ac.dl=true;toast('⬇ Descargando respaldo_2023.'+t.toLowerCase()+' (simulado)');renderCierre()}
+function purgeModal(){modal(`<h3 class="text-xl font-bold mb-2">¿Purgar el año 2023?</h3><p class="text-sm text-slate-600 mb-4">Se eliminarán los recibos y lecturas de 2023 de la base en línea. Las cuentas con mora y los cierres históricos <b>no</b> se tocan.</p>
+  <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="ac.purged=true;closeModal();toast('✅ Año 2023 purgado');renderCierre()" class="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold">Sí, purgar</button></div>`)}
+function resetCierre(){Object.assign(ac,{stage:0,prog:0,dl:false,chk:false,purged:false});renderCierre()}
+
+/* ============================ INICIO ============================ */
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
+renderNav();renderView();
+</script>
+</body>
+</html>
