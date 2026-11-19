@@ -62,9 +62,11 @@ const CATS_EGR=[['Energía eléctrica de bombas','⚡'],['Cloro / insumos quími
 const MES_SEED=[['Ene',4120,3480],['Feb',4210,3390],['Mar',4350,3920],['Abr',4280,3510],['May',4390,3640],['Jun',4460,3870],['Jul',4510,3680],['Ago',4620,3790],['Sep',4580,3950],['Oct',4690,3860]].map(([m,ing,egr])=>({m,ing,egr}));
 
 const state={tarifa:{base:3,incl:15,extra:0.4,reconexion:5,acometida:150,traspaso:10,constancia:2},
-  socios:[],acometidas:[],lecturas:{},libro:[],cortes:[],convenios:[],medidores:[],audit:[],instaladosAnio:23,
-  caja:{abierta:true,turno:1,saldoInicial:50,apertura:'07:30'},seq:{libro:0,comp:124,conv:1}};
-const socioMap={},acoMap={},acoBySocio={},recMap={},recById={};
+  socios:[],acometidas:[],lecturas:{},libro:[],cortes:[],convenios:[],medidores:[],audit:[],despachos:[],solicitudes:[],cambios:[],reportes:[],
+  caja:{abierta:true,turno:1,saldoInicial:50,apertura:'07:30'},seq:{libro:0,comp:124,conv:1,vale:0,sol:0,rep:0}};
+const socioMap={},acoMap={},acoBySocio={},recMap={},recById={},medMap={};
+const MARCAS=['Itron','Elster','Zenner','Sensus'],FONTANEROS=['W. Pérez','R. Menjívar'];
+function addMed(m){m.hist=m.hist||[];state.medidores.push(m);medMap[m.serie]=m;return m}
 const calc=(m3,t=state.tarifa)=>{const exM3=Math.max(0,m3-t.incl),exc=round2(exM3*t.extra);return{base:t.base,exM3,exc,total:round2(t.base+exc)}};
 let seed=11;const rnd=()=>(seed=(seed*9301+49297)%233280)/233280;
 const pick=a=>a[Math.floor(rnd()*a.length)];
@@ -74,22 +76,24 @@ function addAco(num,idx,nombre,sector,dir,serie,mora,sinHistorial){
   if(!sinHistorial)PERIODOS_HIST.forEach((p,k)=>{const m3=Math.round(7+rnd()*(id==='219-2'?30:20));acum+=m3;
     const r={id:id+'|'+p,aco:id,periodo:p,m3,monto:calc(m3).total,pagado:k<PERIODOS_HIST.length-mora,fechaPago:null,conv:null};recMap[id].push(r);recById[r.id]=r});
   const a={id,socio:num,nombre,sector,dir,serie,anterior:acum};state.acometidas.push(a);acoMap[id]=a;(acoBySocio[num]=acoBySocio[num]||[]).push(a);
+  const m=medMap[serie]||addMed({serie,marca:MARCAS[(+serie.slice(3)||0)%4],diam:'½"',fecha:'2025-06-10',factura:'F-2025-0'+(100+(+serie.slice(3)||0)%60),fechaInst:'2025-07-01',lecturaInicio:0});
+  m.estado='instalado';m.aco=id;
 }
 function addSocio(num,nombre,sector){const s={num,nombre,sector};state.socios.push(s);socioMap[num]=s}
 
 const RAW=[
- [142,'Rosa Elena Martínez','Centro',[['Casa de habitación','MD-48213'],['Local comercial','MD-48214']]],
- [101,'José Antonio Hernández','Centro',[['Casa de habitación','MD-47001']]],
- [108,'María Guadalupe Rivas','Centro',[['Casa de habitación','MD-47055']]],
- [115,'Carlos Alberto Mejía','El Calvario',[['Casa de habitación','MD-47102']]],
- [127,'Juan Francisco Portillo','San José',[['Casa de habitación','MD-47188']]],
- [138,'Roberto Carlos Alvarado','La Esperanza',[['Casa de habitación','MD-47276']]],
- [156,'Luis Fernando Argueta','El Calvario',[['Casa de habitación','MD-47365']]],
- [171,'Miguel Ángel Orellana','La Esperanza',[['Casa de habitación','MD-47455']]],
- [190,'Blanca Estela Henríquez','San José',[['Casa de habitación','MD-47588']]],
- [212,'Teresa de Jesús Lemus','Centro',[['Casa de habitación','MD-47677']]],
- [219,'Pedro Antonio Zelaya','El Calvario',[['Casa de habitación','MD-47720'],['Finca / riego','MD-47721']]],
- [241,'Héctor Manuel Guardado','La Esperanza',[['Casa de habitación','MD-47810']]],
+ [142,'Rosa Elena Martínez','Centro',[['Casa de habitación','SN-8841'],['Local comercial','SN-48214']]],
+ [101,'José Antonio Hernández','Centro',[['Casa de habitación','SN-47001']]],
+ [108,'María Guadalupe Rivas','Centro',[['Casa de habitación','SN-47055']]],
+ [115,'Carlos Alberto Mejía','El Calvario',[['Casa de habitación','SN-47102']]],
+ [127,'Juan Francisco Portillo','San José',[['Casa de habitación','SN-47188']]],
+ [138,'Roberto Carlos Alvarado','La Esperanza',[['Casa de habitación','SN-47276']]],
+ [156,'Luis Fernando Argueta','El Calvario',[['Casa de habitación','SN-47365']]],
+ [171,'Miguel Ángel Orellana','La Esperanza',[['Casa de habitación','SN-47455']]],
+ [190,'Blanca Estela Henríquez','San José',[['Casa de habitación','SN-47588']]],
+ [212,'Teresa de Jesús Lemus','Centro',[['Casa de habitación','SN-47677']]],
+ [219,'Pedro Antonio Zelaya','El Calvario',[['Casa de habitación','SN-47720'],['Finca / riego','SN-47721']]],
+ [241,'Héctor Manuel Guardado','La Esperanza',[['Casa de habitación','SN-47810']]],
 ];
 const MORA_SEED={'142-2':2,'108-1':3,'115-1':1,'127-1':2,'138-1':3,'156-1':1,'171-1':2,'190-1':4,'212-1':1,'219-2':1,'241-1':2};
 RAW.forEach(([num,nombre,sector,acs])=>{addSocio(num,nombre,sector);acs.forEach(([dir,serie],i)=>addAco(num,i+1,nombre,sector,dir,serie,MORA_SEED[num+'-'+(i+1)]||0))});
@@ -98,12 +102,29 @@ const AP=['Hernández','Martínez','López','García','Rivas','Mejía','Flores',
 let serieN=50000;
 for(let n=1;n<=1040;n++){ if(socioMap[n])continue;
   const nombre=`${pick(NOM)} ${pick(AP)} ${pick(AP)}`,sector=pick(SECTORES),r=rnd(),mora=r<.78?0:r<.88?1:r<.95?2:r<.985?3:4;
-  addSocio(n,nombre,sector);addAco(n,1,nombre,sector,'Casa de habitación','MD-'+(serieN++),mora);
-  if(rnd()<.07)addAco(n,2,nombre,sector,pick(['Local comercial','Finca / riego']),'MD-'+(serieN++),Math.min(mora,1));
+  addSocio(n,nombre,sector);addAco(n,1,nombre,sector,'Casa de habitación','SN-'+(serieN++),mora);
+  if(rnd()<.07)addAco(n,2,nombre,sector,pick(['Local comercial','Finca / riego']),'SN-'+(serieN++),Math.min(mora,1));
 }
 state.socios.sort((a,b)=>a.num-b.num);
-for(let i=101;i<=114;i++)state.medidores.push({serie:'MD-60'+i,modelo:'Medidor ½" chorro múltiple',estado:'bodega'});
-state.medidores.push({serie:'MD-60090',modelo:'Medidor ½" chorro múltiple',estado:'baja'},{serie:'MD-60091',modelo:'Medidor ½" chorro múltiple',estado:'baja'});
+/* ---- Bodega: lotes comprados ---- */
+for(let i=101;i<=114;i++)addMed({serie:'SN-60'+i,marca:i<108?'Itron':'Zenner',diam:i%5===0?'¾"':'½"',fecha:i<108?'2026-09-20':'2026-11-05',factura:i<108?'F-2026-0412':'F-2026-0577',estado:'bodega',ingresoPor:USERS.secretaria});
+addMed({serie:'SN-9920',marca:'Elster',diam:'½"',fecha:'2026-11-05',factura:'F-2026-0577',estado:'bodega',ingresoPor:USERS.secretaria});
+addMed({serie:'SN-60090',marca:'Sensus',diam:'½"',fecha:'2026-03-02',factura:'F-2026-0150',estado:'baja',bajaInfo:{fecha:'2026-09-30',lectura:512,motivo:'Carátula rota',aco:'—'}});
+addMed({serie:'SN-60091',marca:'Sensus',diam:'½"',fecha:'2026-03-02',factura:'F-2026-0150',estado:'baja',bajaInfo:{fecha:'2026-10-18',lectura:48,motivo:'Fuga interna',aco:'—'}});
+/* ---- Solicitudes de nueva acometida (derecho ya cobrado en caja) ---- */
+function addSol(nombre,dir,sector,comp,fecha){const so={id:'S-'+String(++state.seq.sol).padStart(4,'0'),nombre,dir,sector,comp,fecha,estado:'pendiente'};state.solicitudes.push(so);return so}
+addSol('Familia Ortiz Campos','Cantón El Pedregal, casa 12','San José','000118','2026-11-12');
+addSol('Mario Antonio Bonilla','Col. La Paz, pasaje 3','Centro','000121','2026-11-14');
+/* ---- Despachos (vales de salida) ---- */
+function addVale(serie,fontanero,dest,autorizo,fecha){const v={id:'V-'+String(++state.seq.vale).padStart(4,'0'),fecha,hora:'08:10',serie,fontanero,dest,autorizo,estado:'activo'};state.despachos.push(v);const m=medMap[serie];m.estado='despachado';m.vale=v.id;m.fontanero=fontanero;m.dest=dest;return v}
+(function(){const sol=state.solicitudes[0];sol.estado='despachada';sol.serie='SN-60103';
+ addVale('SN-60103','W. Pérez',{tipo:'solicitud',ref:sol.id,txt:'Solicitud '+sol.id+' · '+sol.nombre,acoId:null},USERS.secretaria,'2026-11-16');
+ addVale('SN-60104','R. Menjívar',{tipo:'socio',ref:101,acoId:'101-2',txt:'Socio #101 · nueva acometida 101-2'},USERS.admin,'2026-11-17')})();
+/* ---- Historial de cambios de medidor (semilla) ---- */
+addMed({serie:'SN-41200',marca:'Sensus',diam:'½"',fecha:'2022-04-10',factura:'F-2022-0033',estado:'baja',bajaInfo:{fecha:'2026-08-14',lectura:3120,motivo:'Turbina trabada',aco:'101-1'}});
+acoMap['101-1'].anterior=58;medMap['SN-47001'].lecturaInicio=0;medMap['SN-47001'].fechaInst='2026-08-14';medMap['SN-47001'].fecha='2026-07-28';medMap['SN-47001'].factura='F-2026-0301';
+state.cambios.push({aco:'101-1',anterior:'SN-41200',nuevo:'SN-47001',fecha:'2026-08-14',corte:3120,inicio:0,autorizo:USERS.secretaria,fontanero:'W. Pérez',motivo:'Turbina trabada',vale:'V-0000'});
+
 
 /* ---- Libro diario inicial (noviembre) ---- */
 function pushLibro(e){e.id=++state.seq.libro;e.anulado=false;e.recIds=e.recIds||[];state.libro.push(e);return e}
@@ -180,12 +201,12 @@ function renderView(){refreshChips();({fontanero:renderF,secretaria:renderS,teso
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 
 /* ============================ FONTANERO (MÓVIL) ============================ */
-const fv={sector:'Todos',q:'',sel:null,actual:'',foto:false,fotoHora:'',fotoLect:'',width:80};
+const fv={sector:'Todos',q:'',sel:null,actual:'',foto:false,fotoHora:'',fotoLect:'',width:80,view:'',inst:null,ini:'0',ubicI:''};
 function renderF(){
   $('#view').innerHTML=`
   <div class="mb-4 text-center text-sm text-slate-500 hidden sm:block">Vista móvil del fontanero — así se vería en el celular durante la ruta de lectura.</div>
   <div class="w-full sm:max-w-[400px] mx-auto sm:border-[10px] sm:border-slate-800 sm:rounded-[2.5rem] bg-slate-50 sm:h-[790px] overflow-y-auto shadow-xl relative"><div id="fbody"></div></div>`;
-  fv.sel?renderFDetail():renderFList();
+  fv.sel?renderFDetail():fv.view==='inst'?(fv.inst?renderFInstForm():renderFInst()):renderFList();
 }
 function renderFList(){
   const done=Object.keys(state.lecturas).length,total=state.acometidas.length;
@@ -195,7 +216,8 @@ function renderFList(){
     <div class="flex items-end justify-between"><div class="text-xl font-bold">Hola, Fontanero 👷</div><div class="text-sm font-semibold">${done}/${total.toLocaleString('en-US')}</div></div>
     <div class="h-2 bg-sky-800/50 rounded-full mt-2 overflow-hidden"><div class="h-full bg-white rounded-full transition-all" style="width:${Math.max(1,done/total*100)}%"></div></div>
     <input id="fq" value="${fv.q}" oninput="fv.q=this.value;fListItems()" placeholder="🔍 Socio # o N° de serie del medidor" class="mt-3 w-full rounded-xl px-4 py-3.5 text-slate-800 text-base" inputmode="search">
-    <div class="text-[11px] text-sky-100 mt-1">Prueba con <b>142</b> (2 acometidas), <b>108</b> (orden de corte) o <b>MD-47055</b></div>
+    <div class="text-[11px] text-sky-100 mt-1">Prueba con <b>142</b> (2 acometidas), <b>108</b> (orden de corte) o <b>SN-47055</b></div>
+    <button onclick="renderFInst()" class="mt-3 w-full py-3 rounded-xl bg-white/20 hover:bg-white/30 font-semibold text-sm flex justify-between px-4"><span>📦 Instalaciones por confirmar</span><span class="bg-white text-sky-700 rounded-full px-2.5 font-bold">${fPend().length}</span></button>
   </div>
   <div class="px-3 pt-3 flex gap-2 overflow-x-auto pb-1">
     ${['Todos',...SECTORES].map(s=>`<button onclick="fv.sector='${s}';renderFList()" class="shrink-0 px-4 py-2.5 rounded-full text-sm font-semibold ${fv.sector===s?'bg-sky-600 text-white':'bg-white border border-slate-300 text-slate-600'}">${s}</button>`).join('')}
@@ -205,13 +227,13 @@ function renderFList(){
 }
 function fListItems(){
   const q=fv.q.trim().toLowerCase().replace('#','');
-  const L=state.acometidas.filter(a=>(fv.sector==='Todos'||a.sector===fv.sector)&&(!q||a.id.toLowerCase().startsWith(q)||a.serie.toLowerCase().includes(q)));
+  const L=state.acometidas.filter(a=>(fv.sector==='Todos'||a.sector===fv.sector)&&(!q||a.id.toLowerCase().startsWith(q)||a.serie.toLowerCase().includes(q))).sort((x,y)=>(y.reciente?1:0)-(x.reciente?1:0));
   $('#flist').innerHTML=L.length?L.slice(0,40).map(a=>{
-    const m=moraOf(a.id),n=nivel(m),leida=state.lecturas[a.id];
-    return `<button onclick="openF('${a.id}')" class="w-full text-left bg-white rounded-2xl p-4 shadow-sm border border-slate-200 active:scale-[.99] transition flex items-center gap-3">
+    const m=moraOf(a.id),n=nivel(m),leida=state.lecturas[a.id],tag=a.sinMedidor?'<div class="text-red-600 font-bold text-xs">⛔ Sin medidor</div>':a.nueva?'<div class="text-sky-600 font-bold text-xs">🆕 Nueva</div>':a.reciente?'<div class="text-sky-600 font-bold text-xs">🔧 Medidor nuevo</div>':'';
+    return `<button onclick="${a.sinMedidor?"toast('⛔ Medidor dado de baja · esperando reemplazo')":`openF('${a.id}')`}" class="w-full text-left bg-white rounded-2xl p-4 shadow-sm border border-slate-200 active:scale-[.99] transition flex items-center gap-3">
       <div class="w-16 h-16 rounded-xl bg-sky-50 text-sky-700 flex flex-col items-center justify-center shrink-0"><div class="text-[10px] uppercase">Acom.</div><div class="font-bold text-lg leading-none">${a.id}</div></div>
       <div class="flex-1 min-w-0"><div class="font-semibold truncate">${a.nombre}</div><div class="text-xs text-slate-500 truncate">${a.dir} · ${a.sector}</div><div class="text-xs text-slate-400 mono">${a.serie}</div></div>
-      <div class="text-right shrink-0 space-y-1">${leida?'<div class="text-emerald-600 font-bold text-sm">✓ Leída</div>':'<div class="text-slate-400 text-sm">Pendiente</div>'}
+      <div class="text-right shrink-0 space-y-1">${tag}${leida?'<div class="text-emerald-600 font-bold text-sm">✓ Leída</div>':'<div class="text-slate-400 text-sm">Pendiente</div>'}
         ${m>=2?`<div class="inline-block w-3 h-3 rounded-full ${NIV[n].dot}"></div>`:''}</div></button>`}).join('')
     +(L.length>40?`<div class="text-center text-xs text-slate-400 py-2">Mostrando 40 de ${L.length} · use el buscador o el sector</div>`:''):`<div class="text-center text-slate-400 py-10">Sin resultados</div>`;
 }
@@ -225,9 +247,9 @@ function renderFDetail(){
   <div class="p-4 space-y-4">
     <div class="bg-white rounded-2xl p-4 border border-slate-200 text-sm space-y-1">
       <div><b>${a.nombre}</b> · Socio #${a.socio}</div><div class="text-slate-500">${a.dir} · Sector ${a.sector}</div>
-      <div class="text-slate-500">Medidor: <span class="mono">${a.serie}</span></div>${m>=2?`<div class="mt-2">${badge(nivel(m))}</div>`:''}</div>
+      <div class="text-slate-500">Medidor: <span class="mono">${a.serie}</span></div>${m>=2?`<div class="mt-2">${badge(nivel(m))}</div>`:''}<button onclick="fDanoModal()" class="mt-2 w-full py-2.5 rounded-xl bg-red-50 text-red-700 font-semibold text-sm">⚠️ Reportar medidor dañado</button></div>
     <div class="grid grid-cols-2 gap-3">
-      <div class="bg-slate-200 rounded-2xl p-4"><div class="text-xs text-slate-500">Lectura anterior</div><div class="text-3xl font-bold mono">${a.anterior}</div><div class="text-xs text-slate-500">m³ · Oct 2026</div></div>
+      <div class="bg-slate-200 rounded-2xl p-4"><div class="text-xs text-slate-500">Lectura anterior</div><div class="text-3xl font-bold mono">${a.anterior}</div><div class="text-xs text-slate-500">${a.reciente?'m³ · lectura inicial (medidor nuevo)':'m³ · Oct 2026'}</div></div>
       <div class="bg-white rounded-2xl p-4 border-2 border-sky-400"><label class="text-xs text-sky-700 font-semibold">Lectura actual</label>
         <input id="fact" type="number" inputmode="numeric" value="${fv.actual}" oninput="fv.actual=this.value;fCalc()" placeholder="0000" class="w-full text-3xl font-bold mono bg-transparent"></div></div>
     <button id="fphoto" onclick="fTakePhoto()" class="w-full py-4 rounded-2xl font-semibold text-base border-2"></button>
@@ -263,10 +285,10 @@ function fCalc(){
   const area=$('#calcArea');
   if(!has){area.innerHTML=`<div class="text-center text-slate-400 text-sm py-4">Ingrese la lectura actual para calcular el consumo.</div>`;return}
   if(act<a.anterior){area.innerHTML=`<div class="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-4 text-sm font-semibold">⚠️ La lectura actual no puede ser menor que la anterior (${a.anterior}).</div>`;return}
-  const m3=act-a.anterior,c=calc(m3),hist=recsOf(a.id).filter(r=>r.periodo<PERIODO),avg=hist.length?hist.reduce((s,r)=>s+r.m3,0)/hist.length:0;
+  const carry=a.carry||0,m3=act-a.anterior+carry,c=calc(m3),hist=recsOf(a.id).filter(r=>r.periodo<PERIODO),avg=hist.length?hist.reduce((s,r)=>s+r.m3,0)/hist.length:0;
   const arrears=unpaidPrev(a.id),arrAmt=sum(arrears),mm=arrears.length,ok=fv.foto&&!mismatch;
   area.innerHTML=`
-  ${m3>avg*2&&m3>20&&avg?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-3 text-sm mb-3">⚠️ Consumo inusual: más del doble del promedio (${avg.toFixed(0)} m³). Verifique la lectura o posible fuga.</div>`:''}
+  ${carry?`<div class="bg-sky-50 border border-sky-300 text-sky-800 rounded-2xl p-3 text-sm mb-3">🔧 Incluye <b>${carry} m³</b> consumidos con el medidor anterior (hasta su lectura de corte).</div>`:''}${m3>avg*2&&m3>20&&avg?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-3 text-sm mb-3">⚠️ Consumo inusual: más del doble del promedio (${avg.toFixed(0)} m³). Verifique la lectura o posible fuga.</div>`:''}
   <div class="bg-white rounded-2xl p-4 border border-slate-200 space-y-2">
     <div class="flex justify-between items-end"><span class="text-slate-500">Consumo del mes</span><span class="text-3xl font-bold text-sky-700">${m3} <span class="text-base">m³</span></span></div>
     <div class="border-t pt-2 text-sm space-y-1">
@@ -294,7 +316,7 @@ function ticketHTML(a,act,m3,c,arrAmt,mm){
     <div class="text-center font-bold leading-tight">ASOCIACIÓN DE AGUA POTABLE<br>«AGUA VIVA»</div><div class="text-center text-[0.85em]">Recibo de consumo · ${MESES[PERIODO]}</div><div class="dash"></div>
     ${row('Socio:','#'+a.socio)}${row('Acometida:',a.id)}<div>${a.nombre}</div><div class="text-[0.9em]">${a.dir} · ${a.sector}</div>
     ${row('Medidor:',a.serie)}${row('Fecha:','16/11/2026')}<div class="dash"></div>
-    ${row('Lect. anterior:',a.anterior)}${row('Lect. actual:',act)}${row('Consumo:',m3+' m³',1)}<div class="dash"></div>
+    ${row('Lect. anterior:',a.anterior)}${row('Lect. actual:',act)}${a.carry?row('+ Med. anterior:',a.carry+' m³'):''}${row('Consumo:',m3+' m³',1)}<div class="dash"></div>
     ${row('Cuota fija ('+state.tarifa.incl+'m³):',fmt(c.base))}${row('Excedente '+c.exM3+'m³:',fmt(c.exc))}${row('Total del mes:',fmt(c.total),1)}
     ${mm?row('Saldo anterior ('+mm+'m):',fmt(arrAmt)):''}<div class="dash"></div>
     <div class="flex justify-between font-bold text-[1.15em]"><span>TOTAL A PAGAR</span><span>${fmt(total)}</span></div><div class="text-[0.85em]">Vence: 30/11/2026</div>
@@ -302,7 +324,7 @@ function ticketHTML(a,act,m3,c,arrAmt,mm){
     <div class="text-center text-[0.8em] mt-1">Pague en oficina de lun a vie<br>¡Gracias por cuidar el agua!</div></div>`;
 }
 function fSave(){
-  const a=acoMap[fv.sel],act=parseInt(fv.actual,10),m3=act-a.anterior,c=calc(m3);
+  const a=acoMap[fv.sel],act=parseInt(fv.actual,10),m3=act-a.anterior+(a.carry||0),c=calc(m3);
   state.lecturas[a.id]={actual:act,m3,foto:true,fotoHora:fv.fotoHora,fotoLect:fv.fotoLect};
   recMap[a.id]=recsOf(a.id).filter(r=>r.id!==a.id+'|'+PERIODO);delete recById[a.id+'|'+PERIODO];
   const r={id:a.id+'|'+PERIODO,aco:a.id,periodo:PERIODO,m3,monto:c.total,pagado:false,fechaPago:null,conv:null};recMap[a.id].push(r);recById[r.id]=r;
@@ -318,9 +340,9 @@ function renderS(){
   <div class="flex flex-wrap items-end justify-between gap-3 mb-4"><div><h1 class="text-2xl font-bold">Caja y atención al socio</h1>
     <p class="text-slate-500 text-sm">Cobros, otros servicios, convenios de pago y arqueo diario.</p></div>
     <div class="px-4 py-2 rounded-xl text-sm font-semibold ${c.abierta?'bg-emerald-100 text-emerald-800':'bg-red-100 text-red-800'}">${c.abierta?'🟢 Caja abierta · Turno #'+c.turno+' desde '+c.apertura:'🔴 Caja cerrada'}</div></div>
-  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['cobros','💵 Cobro de recibos'],['otros','🧾 Otros cobros'],['convenios','🤝 Convenios de pago'],['caja','🧮 Caja / Arqueo']].map(([k,l])=>tabBtn(sv.tab,k,l,'setTab')).join('')}</div>
+  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['cobros','💵 Cobro de recibos'],['otros','🧾 Otros cobros'],['convenios','🤝 Convenios de pago'],['bodega','📦 Bodega y medidores'],['caja','🧮 Caja / Arqueo']].map(([k,l])=>tabBtn(sv.tab,k,l,'setTab')).join('')}</div>
   <div id="stab"></div>`;
-  ({cobros:sCobros,otros:sOtros,convenios:sConv,caja:sCaja})[sv.tab]();
+  ({cobros:sCobros,otros:sOtros,convenios:sConv,bodega:()=>bodegaInto('#stab'),caja:sCaja})[sv.tab]();
 }
 const closedBanner=()=>state.caja.abierta?'':`<div class="mb-4 bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm font-semibold flex flex-wrap items-center justify-between gap-2">🔴 La caja está cerrada: no se pueden registrar cobros. <button onclick="setTab('caja')" class="px-4 py-2 rounded-lg bg-red-600 text-white">Abrir caja</button></div>`;
 
@@ -408,7 +430,7 @@ function pickInfo(kind){
 
 /* ---- Otros cobros ---- */
 const OTROS={reconexion:{i:'🔌',t:'Derecho de reconexión',d:'Servicio cortado por mora, ya regularizado',f:()=>state.tarifa.reconexion},
-  acometida:{i:'🚰',t:'Nueva acometida',d:'Alta de nuevo socio con medidor de bodega',f:()=>state.tarifa.acometida},
+  acometida:{i:'🚰',t:'Nueva acometida',d:'Derecho de conexión · genera solicitud de instalación',f:()=>state.tarifa.acometida},
   traspaso:{i:'🔁',t:'Traspaso de titular',d:'Cambio de nombre del socio titular',f:()=>state.tarifa.traspaso},
   constancia:{i:'📄',t:'Constancia de solvencia',d:'Documento para trámites del socio',f:()=>state.tarifa.constancia}};
 function sOtros(){
@@ -422,12 +444,11 @@ function sOtros(){
 function otroModal(kind){
   if(!needCaja())return;const o=OTROS[kind];window._ok=false;window._pa=null;let body='',okInit=false;
   if(kind==='acometida'){
-    const stock=state.medidores.filter(m=>m.estado==='bodega');okInit=stock.length>0;window._ok=okInit;
-    body=stock.length?`<label class="text-sm font-semibold">Nombre del nuevo socio</label><input id="nn" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="Nombre completo">
+    okInit=true;window._ok=true;
+    body=`<div class="bg-sky-50 border border-sky-200 text-sky-800 rounded-xl p-3 text-xs mb-3">Se cobra el derecho y se crea una <b>solicitud</b>. Bodega despacha el medidor y el fontanero confirma la instalación en campo (módulo «Bodega y medidores»).</div>
+     <label class="text-sm font-semibold">Nombre del nuevo socio</label><input id="nn" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="Nombre completo">
      <label class="text-sm font-semibold">Dirección / cantón</label><input id="nd" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2" placeholder="Cantón El Pedregal">
-     <label class="text-sm font-semibold">Sector</label><select id="ns" class="w-full border rounded-xl px-3 py-3 mt-1 mb-2">${SECTORES.map(s=>`<option>${s}</option>`).join('')}</select>
-     <label class="text-sm font-semibold">Medidor de bodega a instalar <span class="font-normal text-slate-500">(${stock.length} disponibles)</span></label><select id="nm" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${stock.slice(0,10).map(m=>`<option>${m.serie}</option>`).join('')}</select>`
-     :`<div class="bg-red-50 border border-red-300 text-red-800 rounded-xl p-3 text-sm mb-3">🔴 No hay medidores en bodega. Pida al Administrador ingresar un lote.</div>`;
+     <label class="text-sm font-semibold">Sector</label><select id="ns" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${SECTORES.map(s=>`<option>${s}</option>`).join('')}</select>`;
   }else body=pickerHTML(kind)+(kind==='traspaso'?`<label class="text-sm font-semibold">Nuevo titular</label><input id="ntit" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3" placeholder="Nombre completo del nuevo titular">`:'');
   modal(`<h3 class="text-xl font-bold mb-1">${o.i} ${o.t}</h3><div class="text-2xl font-extrabold text-sky-700 mb-3">${fmt(o.f())}</div>${body}${metodoSel()}
    <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button id="cbtn" ${okInit?'':'disabled'} onclick="otroConfirm('${kind}')" class="flex-1 py-3.5 rounded-xl font-bold text-white ${okInit?'bg-emerald-600':'bg-slate-300'}">Cobrar y emitir</button></div>`);
@@ -436,12 +457,10 @@ function otroConfirm(kind){
   if(!_ok)return;const o=OTROS[kind],fee=o.f(),metodo=$('#pm').value;let e;
   if(kind==='acometida'){
     const nombre=esc($('#nn').value.trim()),dir=esc($('#nd').value.trim());if(!nombre||!dir){toast('⚠️ Complete nombre y dirección');return}
-    const serie=$('#nm').value,num=Math.max(...state.socios.map(s=>s.num))+1;
-    e=cobrarCaja({cat:'Nueva acometida',desc:`Socio #${num} · ${dir}`,monto:fee,metodo});
-    addSocio(num,nombre,$('#ns').value);addAco(num,1,nombre,$('#ns').value,dir,serie,0,true);
-    state.medidores.find(m=>m.serie===serie).estado='instalado';state.instaladosAnio++;
-    audit('Nueva acometida',`Socio #${num} ${nombre} · medidor ${serie} descontado de bodega`);
-    toast(`✅ Socio #${num} creado · medidor ${serie} instalado · Comprobante ${e.comp}`);
+    e=cobrarCaja({cat:'Nueva acometida',desc:`Solicitud · ${nombre} · ${dir}`,monto:fee,metodo});
+    const so=addSol(nombre,dir,$('#ns').value,e.comp,HOY);e.desc=`Solicitud ${so.id} · ${nombre} · ${dir}`;
+    audit('Solicitud de acometida',`${so.id} ${nombre} · derecho cobrado ${fmt(fee)} (comprobante ${e.comp})`);
+    toast(`✅ Solicitud ${so.id} creada · pendiente de despacho de medidor desde Bodega · Comprobante ${e.comp}`);
   }else{
     const a=acoMap[_pa];
     if(kind==='traspaso'){const nt=esc($('#ntit').value.trim());if(!nt){toast('⚠️ Indique el nuevo titular');return}
@@ -658,9 +677,9 @@ function expXLS(){
 const av={tab:'resumen'},ac={stage:0,prog:0,dl:false,chk:false,purged:false};
 const aSet=t=>{av.tab=t;renderA()};
 function renderA(){
-  $('#view').innerHTML=`<div class="mb-4"><h1 class="text-2xl font-bold">Panel de administración</h1><p class="text-slate-500 text-sm">Resumen, tarifas, inventario, auditoría y cierre anual.</p></div>
-  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['resumen','📊 Resumen'],['tarifas','⚙️ Tarifas'],['inventario','📦 Inventario'],['auditoria','🕵️ Auditoría'],['cierre','🗄️ Cierre anual']].map(([k,l])=>tabBtn(av.tab,k,l,'aSet')).join('')}</div><div id="atab"></div>`;
-  ({resumen:aResumen,tarifas:aTarifas,inventario:aInv,auditoria:aAud,cierre:aCierre})[av.tab]();
+  $('#view').innerHTML=`<div class="mb-4"><h1 class="text-2xl font-bold">Panel de administración</h1><p class="text-slate-500 text-sm">Resumen, tarifas, bodega y medidores, auditoría y cierre anual.</p></div>
+  <div class="flex gap-2 overflow-x-auto mb-5 pb-1">${[['resumen','📊 Resumen'],['tarifas','⚙️ Tarifas'],['inventario','📦 Bodega y medidores'],['auditoria','🕵️ Auditoría'],['cierre','🗄️ Cierre anual']].map(([k,l])=>tabBtn(av.tab,k,l,'aSet')).join('')}</div><div id="atab"></div>`;
+  ({resumen:aResumen,tarifas:aTarifas,inventario:()=>bodegaInto('#atab'),auditoria:aAud,cierre:aCierre})[av.tab]();
 }
 function aResumen(){
   let fact=0,cob=0;const sec={};SECTORES.forEach(s=>sec[s]=0);
@@ -686,23 +705,6 @@ function aTarifas(){
 function tPreview(){const t={base:+$('#t_base').value||0,incl:+$('#t_incl').value||0,extra:+$('#t_extra').value||0},m=+$('#tSim').value||0,c=calc(m,t);$('#tOut').textContent=`${fmt(t.base)} + ${c.exM3} m³ × ${fmt(t.extra)} = ${fmt(c.total)}`}
 function saveTarifa(){const nt={},d=[];TF.forEach(([k,l])=>{nt[k]=+$('#t_'+k).value||0;if(nt[k]!==state.tarifa[k])d.push(`${l}: ${state.tarifa[k]} → ${nt[k]}`)});
   if(!d.length){toast('Sin cambios que guardar');return}state.tarifa=nt;audit('Cambio de tarifa',d.join(' · '),'alto');toast('✅ Tarifas actualizadas · registradas en auditoría')}
-function aInv(){
-  const b=state.medidores.filter(m=>m.estado==='bodega'),bajas=state.medidores.filter(m=>m.estado==='baja').length,next=Math.max(...state.medidores.map(m=>+m.serie.slice(3)))+1,low=b.length<5;
-  const kpi=(l,v,s,c='')=>`<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"><div class="text-sm text-slate-500">${l}</div><div class="text-3xl font-extrabold mt-1 ${c}">${v}</div><div class="text-xs text-slate-400 mt-1">${s}</div></div>`;
-  $('#atab').innerHTML=`<div class="grid grid-cols-3 gap-4 mb-5">${kpi('En bodega',b.length,low?'⚠️ bajo stock mínimo (5)':'stock mínimo: 5',low?'text-red-600':'text-emerald-600')}${kpi('Instalados en 2026',state.instaladosAnio,'se descuentan al cobrar «Nueva acometida»')}${kpi('Dados de baja',bajas,'dañados / retirados')}</div>
-  <div class="grid lg:grid-cols-3 gap-5"><section class="bg-white rounded-2xl border border-slate-200 p-5 h-fit"><h2 class="font-bold mb-3">➕ Ingresar lote de medidores</h2>
-    <label class="text-sm font-semibold">Cantidad</label><input id="lq" type="number" min="1" max="50" value="10" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="text-sm font-semibold">Costo unitario ($)</label><input id="lc" type="number" step="0.5" value="18" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">
-    <label class="text-sm font-semibold">Proveedor</label><input id="lp" value="Distribuidora Hidráulica S.A." class="w-full border rounded-xl px-3 py-3 mt-1 mb-3"><label class="flex items-center gap-2 text-sm mb-4"><input id="lg" type="checkbox" checked class="w-5 h-5"> Registrar compra como egreso en el Libro Diario</label>
-    <div class="text-xs text-slate-500 mb-3">Series nuevas desde <span class="mono">MD-${next}</span></div><button onclick="addLote()" class="w-full py-3.5 rounded-xl bg-sky-600 text-white font-bold">Ingresar a bodega</button></section>
-   <section class="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2"><h2 class="font-bold mb-3">Medidores nuevos en bodega</h2><div class="max-h-[460px] overflow-y-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Serie</th><th>Modelo</th><th></th></tr></thead><tbody>
-    ${b.slice(0,40).map(m=>`<tr class="border-b last:border-0"><td class="py-2.5 mono font-semibold">${m.serie}</td><td>${m.modelo}</td><td class="text-right"><button onclick="bajaMed('${m.serie}')" class="px-3 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold hover:bg-red-50 hover:text-red-700">Dar de baja</button></td></tr>`).join('')||'<tr><td colspan="3" class="py-6 text-center text-slate-400">Bodega vacía</td></tr>'}</tbody></table></div></section></div>`;
-}
-function addLote(){const q=Math.min(50,parseInt($('#lq').value,10)||0),cu=parseFloat($('#lc').value)||0;if(q<1){toast('⚠️ Cantidad inválida');return}
-  let n=Math.max(...state.medidores.map(m=>+m.serie.slice(3)))+1;for(let i=0;i<q;i++)state.medidores.push({serie:'MD-'+(n+i),modelo:'Medidor ½" chorro múltiple',estado:'bodega'});
-  const tot=round2(q*cu);audit('Ingreso de inventario',`${q} medidores desde MD-${n} · ${esc($('#lp').value)} · ${fmt(tot)}`);
-  if($('#lg').checked&&tot>0)addLibro({fecha:HOY,hora:hora(),tipo:'egreso',cat:'Materiales PVC / fontanería',desc:`Compra de ${q} medidores · ${esc($('#lp').value)}`,monto:tot,metodo:'Transferencia',turno:null,usuario:USERS.tesorero});
-  toast(`✅ ${q} medidores ingresados${$('#lg').checked?' · egreso '+fmt(tot)+' en Libro Diario':''}`);aInv()}
-function bajaMed(s){state.medidores.find(m=>m.serie===s).estado='baja';audit('Baja de medidor',`${s} marcado como dañado/retirado`);toast('Medidor dado de baja');aInv()}
 function aAud(){
   const f=(av.q||'').toLowerCase(),L=state.audit.filter(a=>!f||(a.user+a.accion+a.detalle).toLowerCase().includes(f));
   $('#atab').innerHTML=`<div class="grid lg:grid-cols-3 gap-5"><section class="bg-white rounded-2xl border border-slate-200 p-5 h-fit"><h2 class="font-bold mb-1">✏️ Ajustar saldo de un recibo</h2><p class="text-xs text-slate-500 mb-3">Solo Directiva. Queda registrado con usuario, hora y motivo.</p>
@@ -746,6 +748,304 @@ function dl(t){ac.dl=true;audit('Descarga de respaldo',`respaldo_2023.${t.toLowe
 function purgeModal(){modal(`<h3 class="text-xl font-bold mb-2">¿Purgar el año 2023?</h3><p class="text-sm text-slate-600 mb-4">Se eliminarán de la base en línea los recibos <b>pagados</b> de 2023. Cuentas con mora, convenios vigentes y cierres históricos <b>no</b> se tocan.</p>
   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="ac.purged=true;audit('Purga anual','Año 2023 purgado (solo histórico pagado) tras respaldo','alto');closeModal();toast('✅ Año 2023 purgado');aCierre()" class="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold">Sí, purgar</button></div>`)}
 function resetCierre(){Object.assign(ac,{stage:0,prog:0,dl:false,chk:false,purged:false});aCierre()}
+
+
+/* ============================ BODEGA Y MEDIDORES (Secretaria / Administrador) ============================ */
+state.ingresos=[{fecha:'2026-11-05',factura:'F-2026-0577',marca:'Zenner / Elster',diam:'½" / ¾"',desde:'SN-60108',hasta:'SN-60114 + SN-9920',qty:8,por:USERS.secretaria},
+ {fecha:'2026-09-20',factura:'F-2026-0412',marca:'Itron',diam:'½" / ¾"',desde:'SN-60101',hasta:'SN-60107',qty:7,por:USERS.secretaria}];
+state.reportes.push({id:'R-0001',aco:'156-1',serie:acoMap['156-1'].serie,motivo:'Carátula rota',lectura:'',fecha:'2026-11-17',hora:'10:42',por:'W. Pérez',estado:'pendiente'});
+state.seq.rep=1;
+const EST={bodega:{l:'EN BODEGA',c:'bg-sky-100 text-sky-800',i:'📦'},despachado:{l:'DESPACHADO A CAMPO',c:'bg-amber-100 text-amber-800',i:'🚚'},instalado:{l:'INSTALADO',c:'bg-emerald-100 text-emerald-800',i:'✅'},baja:{l:'DADO DE BAJA / DAÑADO',c:'bg-red-100 text-red-800',i:'⛔'}};
+const MOTIVOS=['Turbina trabada','Carátula rota','Fuga interna','Robo / Vandalismo'];
+const IN='w-full border rounded-xl px-3 py-3 mt-1 mb-3',LB='text-sm font-semibold';
+const bv={tab:'resumen',host:'#stab',est:'bodega',q:'',bq:'',f:{},
+  i:{serie:'',qty:1,marca:'Itron',diam:'½"',fecha:HOY,factura:'',costo:18,egr:true},
+  d:{tipo:'solicitud',serie:'',font:FONTANEROS[0],sol:'',socio:'',aco:''},
+  n:{modo:'existente',q:'',socio:null,sol:'',nombre:'',sector:SECTORES[0],serie:'',ini:'0',ubic:''},
+  r:{q:'',aco:null,ult:'',motivo:MOTIVOS[0],serie:'',ini:'0',rep:null}};
+const estBadge=e=>`<span class="px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${EST[e].c}">${EST[e].l}</span>`;
+const stock=()=>state.medidores.filter(m=>m.estado==='bodega');
+const cntE=k=>state.medidores.filter(m=>m.estado===k).length;
+const mLabel=m=>`${m.serie} · ${m.marca} ${m.diam}`;
+const bTab=t=>{bv.tab=t;bRender()};
+function nextAcoId(num){const idx=[...(acoBySocio[num]||[]).map(a=>+a.id.split('-')[1]),...state.despachos.filter(v=>v.estado==='activo'&&v.dest.tipo==='socio'&&v.dest.ref===num).map(v=>+v.dest.acoId.split('-')[1])];return num+'-'+((idx.length?Math.max(...idx):0)+1)}
+function findSocios(q){q=(q||'').trim().toLowerCase().replace('#','');if(!q)return[];if(/^\d+$/.test(q))return socioMap[+q]?[socioMap[+q]]:[];return state.socios.filter(s=>s.nombre.toLowerCase().includes(q)).slice(0,6)}
+function fotoCls(k){return 'w-full py-3.5 rounded-xl font-semibold border-2 mb-3 '+(bv.f[k]?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-dashed border-slate-400 bg-white text-slate-600')}
+function fotoTxt(k,lbl){return bv.f[k]?`✅ Foto guardada · ${bv.f[k]} · ${fechaFmt(HOY)} · GPS <span class="text-xs font-normal">(toca para repetir)</span>`:'📷 '+lbl}
+const fotoBtn=(k,lbl)=>`<button id="bf_${k}" onclick="bFoto('${k}','${lbl}')" class="${fotoCls(k)}">${fotoTxt(k,lbl)}</button>`;
+function bFoto(k,lbl){bv.f[k]=hora();const b=$('#bf_'+k);if(b){b.className=fotoCls(k);b.innerHTML=fotoTxt(k,lbl)}}
+function bodegaInto(host){bv.host=host;bRender()}
+function bRender(){
+  const el=$(bv.host);if(!el)return;
+  const rep=state.reportes.filter(r=>r.estado==='pendiente').length,act=state.despachos.filter(v=>v.estado==='activo').length,sols=state.solicitudes.filter(s=>s.estado==='pendiente').length,low=cntE('bodega')<5;
+  const k=(c,l,v,s,cl)=>`<div class="rounded-2xl p-4 border ${cl}"><div class="text-xs font-semibold opacity-80">${EST[c].i} ${l}</div><div class="text-3xl font-extrabold">${v}</div><div class="text-[11px] opacity-75">${s}</div></div>`;
+  const pill=(n,t,c)=>n?`<span class="px-3 py-1.5 rounded-full font-semibold ${c}">${t}</span>`:'';
+  el.innerHTML=`<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+    ${k('bodega','En bodega',cntE('bodega'),low?'⚠️ bajo stock mínimo (5)':'stock mínimo: 5',low?'bg-red-50 border-red-300 text-red-800':'bg-sky-50 border-sky-200 text-sky-800')}
+    ${k('despachado','Despachados a campo',cntE('despachado'),act+' vale(s) por confirmar','bg-amber-50 border-amber-200 text-amber-800')}
+    ${k('instalado','Instalados',cntE('instalado').toLocaleString('en-US'),'activos en la red','bg-emerald-50 border-emerald-200 text-emerald-800')}
+    ${k('baja','Dados de baja / dañados',cntE('baja'),'historial conservado','bg-red-50 border-red-200 text-red-800')}</div>
+  <div class="flex flex-wrap gap-2 mb-4 text-xs">${pill(rep,'🔔 '+rep+' reporte(s) de daño del fontanero','bg-red-100 text-red-800')}${pill(sols,'📝 '+sols+' solicitud(es) sin medidor','bg-amber-100 text-amber-800')}${pill(act,'🚚 '+act+' instalación(es) por confirmar en campo','bg-sky-100 text-sky-800')}</div>
+  <div class="flex gap-2 overflow-x-auto mb-4 pb-1">${[['resumen','📊 Inventario'],['ingreso','➕ Ingreso a bodega'],['despacho','🚚 Salida / Despacho'],['nueva','🚰 Nueva acometida'],['reemplazo','🔧 Reemplazo de medidor'],['bitacora','📜 Bitácora de cambios']].map(([k2,l])=>tabBtn(bv.tab,k2,l,'bTab')).join('')}</div>
+  <div id="btab"></div>`;
+  ({resumen:bResumen,ingreso:bIngreso,despacho:bDespacho,nueva:bNueva,reemplazo:bReemplazo,bitacora:bBitacora})[bv.tab]();
+}
+/* ---- Inventario ---- */
+function bResumen(){
+  const rep=state.reportes.filter(r=>r.estado==='pendiente'),sols=state.solicitudes.filter(s=>s.estado==='pendiente'),act=state.despachos.filter(v=>v.estado==='activo');
+  $('#btab').innerHTML=`<div class="grid lg:grid-cols-3 gap-5"><section class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-5">
+   <div class="flex flex-wrap gap-2 justify-between mb-3"><div class="flex flex-wrap gap-1.5">${['bodega','despachado','instalado','baja','todos'].map(e=>`<button onclick="bv.est='${e}';bResumen()" class="px-3 py-2 rounded-lg text-sm font-semibold ${bv.est===e?'bg-slate-900 text-white':'bg-slate-100'}">${e==='todos'?'Todos':EST[e].l.split(' /')[0].replace('DESPACHADO A CAMPO','DESPACHADOS')}</button>`).join('')}</div>
+   <input value="${esc(bv.q)}" oninput="bv.q=this.value;bList()" placeholder="🔍 Serie, factura o acometida" class="border rounded-xl px-3 py-2 text-sm"></div><div id="blist" class="max-h-[520px] overflow-y-auto"></div></section>
+  <section class="space-y-4">
+   <div class="bg-white rounded-2xl border p-4"><h3 class="font-bold mb-2">🔔 Reportes de daño (${rep.length})</h3>${rep.map(r=>`<div class="border rounded-xl p-2.5 mb-2 text-sm"><b>Acom ${r.aco}</b> · ${r.serie}<div class="text-xs text-slate-500">${r.motivo} · ${r.por} · ${fechaFmt(r.fecha)} ${r.hora}</div><button onclick="bAtender('${r.id}')" class="mt-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold">Atender → reemplazo</button></div>`).join('')||'<div class="text-xs text-slate-400">Sin reportes pendientes.</div>'}</div>
+   <div class="bg-white rounded-2xl border p-4"><h3 class="font-bold mb-2">📝 Solicitudes sin medidor (${sols.length})</h3>${sols.map(s=>`<div class="border rounded-xl p-2.5 mb-2 text-sm"><b>${s.id}</b> · ${s.nombre}<div class="text-xs text-slate-500">${s.dir} · derecho cobrado (comp. ${s.comp})</div><button onclick="bv.d.tipo='solicitud';bv.d.sol='${s.id}';bTab('despacho')" class="mt-1.5 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-bold">Despachar medidor</button></div>`).join('')||'<div class="text-xs text-slate-400">Ninguna pendiente.</div>'}</div>
+   <div class="bg-white rounded-2xl border p-4"><h3 class="font-bold mb-2">🚚 Por confirmar en campo (${act.length})</h3>${act.map(v=>`<div class="border rounded-xl p-2.5 mb-2 text-sm"><b>${v.id}</b> · ${v.serie}<div class="text-xs text-slate-500">${v.fontanero} · ${v.dest.txt}</div></div>`).join('')||'<div class="text-xs text-slate-400">Todo confirmado.</div>'}</div></section></div>`;
+  bList();
+}
+function bList(){
+  const q=bv.q.trim().toLowerCase(),L=state.medidores.filter(m=>(bv.est==='todos'||m.estado===bv.est)&&(!q||m.serie.toLowerCase().includes(q)||(m.aco||'').startsWith(q)||(m.factura||'').toLowerCase().includes(q)));
+  const det=m=>m.estado==='instalado'?`Acom ${m.aco}${m.fechaInst?' · desde '+fechaFmt(m.fechaInst):''}`:m.estado==='despachado'?`${m.fontanero} · ${m.dest.txt} · ${m.vale}`:m.estado==='baja'?`${m.bajaInfo.motivo} · ${fechaFmt(m.bajaInfo.fecha)} · últ. lect. ${m.bajaInfo.lectura} m³`:'Disponible para despacho';
+  $('#blist').innerHTML=`<div class="text-xs text-slate-400 mb-1">${L.length.toLocaleString('en-US')} medidores</div><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Serie</th><th>Marca · Ø</th><th>Ingreso / Factura</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+  ${L.slice(0,50).map(m=>`<tr class="border-b last:border-0"><td class="py-2.5 mono font-semibold">${m.serie}</td><td>${m.marca} ${m.diam}</td><td class="text-xs text-slate-500">${m.fecha?fechaFmt(m.fecha):''}<br>${m.factura||''}</td><td>${estBadge(m.estado)}</td><td class="text-xs">${det(m)}</td></tr>`).join('')||'<tr><td colspan="5" class="py-6 text-center text-slate-400">Sin resultados</td></tr>'}</tbody></table>${L.length>50?'<div class="text-xs text-center text-slate-400 py-2">Mostrando 50 · use el buscador</div>':''}`;
+}
+function bAtender(id){const r=state.reportes.find(x=>x.id===id);Object.assign(bv.r,{aco:r.aco,ult:String(r.lectura||''),motivo:r.motivo,rep:id});bv.f.baja=null;bTab('reemplazo')}
+/* ---- Ingreso a bodega ---- */
+function bIngreso(){
+  const i=bv.i;
+  $('#btab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5"><section class="lg:col-span-2 bg-white rounded-2xl border p-5 h-fit"><h2 class="font-bold text-lg mb-1">➕ Registro de ingreso a bodega</h2><p class="text-xs text-slate-500 mb-3">Medidores nuevos comprados por la Asociación. Entran con estado <b>EN BODEGA</b>.</p>
+   <label class="${LB}">N° de serie de fábrica</label><input value="${esc(i.serie)}" oninput="bv.i.serie=this.value" placeholder="SN-9930" class="${IN} mono uppercase">
+   <label class="${LB}">Cantidad (series consecutivas)</label><input type="number" min="1" max="50" value="${i.qty}" oninput="bv.i.qty=this.value" class="${IN}">
+   <div class="grid grid-cols-2 gap-3"><div><label class="${LB}">Marca</label><select onchange="bv.i.marca=this.value" class="${IN}">${[...MARCAS,'Otra'].map(m=>`<option ${i.marca===m?'selected':''}>${m}</option>`).join('')}</select></div>
+   <div><label class="${LB}">Diámetro</label><select onchange="bv.i.diam=this.value" class="${IN}">${['½"','¾"','1"'].map(m=>`<option ${i.diam===m?'selected':''}>${m}</option>`).join('')}</select></div></div>
+   <div class="grid grid-cols-2 gap-3"><div><label class="${LB}">Fecha de ingreso</label><input type="date" max="${HOY}" value="${i.fecha}" oninput="bv.i.fecha=this.value" class="${IN}"></div>
+   <div><label class="${LB}">Factura / lote</label><input value="${esc(i.factura)}" oninput="bv.i.factura=this.value" placeholder="F-2026-0600" class="${IN}"></div></div>
+   <label class="${LB}">Costo unitario ($)</label><input type="number" step="0.5" value="${i.costo}" oninput="bv.i.costo=this.value" class="${IN}">
+   <label class="flex items-center gap-2 text-sm mb-4"><input type="checkbox" ${i.egr?'checked':''} onchange="bv.i.egr=this.checked" class="w-5 h-5"> Registrar la compra como egreso en el Libro Diario</label>
+   <button onclick="bIngresoSave()" class="w-full py-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold">Ingresar a bodega</button></section>
+   <section class="lg:col-span-3 bg-white rounded-2xl border p-5"><h2 class="font-bold mb-3">Últimos ingresos</h2><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Fecha</th><th>Factura / lote</th><th>Series</th><th>Marca · Ø</th><th>Cant.</th><th>Registró</th></tr></thead><tbody>
+   ${state.ingresos.slice(0,10).map(g=>`<tr class="border-b last:border-0"><td class="py-2.5">${fechaFmt(g.fecha)}</td><td class="font-semibold">${g.factura}</td><td class="mono text-xs">${g.desde}${g.qty>1?' → '+g.hasta:''}</td><td>${g.marca} ${g.diam}</td><td>${g.qty}</td><td class="text-xs text-slate-500">${g.por}</td></tr>`).join('')}</tbody></table></section></div>`;
+}
+function bIngresoSave(){
+  const i=bv.i,serie=i.serie.trim().toUpperCase(),qty=Math.max(1,Math.min(50,parseInt(i.qty,10)||1)),fact=esc(i.factura.trim()),mm=serie.match(/^(.*?)(\d+)$/);
+  if(!mm||!fact||!i.fecha){toast('⚠️ Indique N° de serie (ej. SN-9930), fecha y factura/lote');return}
+  const w=mm[2].length,n0=+mm[2],series=Array.from({length:qty},(_,k)=>mm[1]+String(n0+k).padStart(w,'0')),dup=series.find(x=>medMap[x]);
+  if(dup){toast('⚠️ La serie '+dup+' ya existe en el inventario');return}
+  series.forEach(x=>addMed({serie:x,marca:i.marca,diam:i.diam,fecha:i.fecha,factura:fact,estado:'bodega',ingresoPor:me()}));
+  const tot=round2(qty*(+i.costo||0)),last=series[qty-1];
+  state.ingresos.unshift({fecha:i.fecha,factura:fact,marca:i.marca,diam:i.diam,desde:series[0],hasta:last,qty,por:me()});
+  audit('Ingreso a bodega',`${qty} medidor(es) ${series[0]}${qty>1?' → '+last:''} · ${i.marca} ${i.diam} · ${fact}${tot?' · '+fmt(tot):''}`);
+  if(i.egr&&tot>0)addLibro({fecha:HOY,hora:hora(),tipo:'egreso',cat:'Materiales PVC / fontanería',desc:`Compra de ${qty} medidores ${i.marca} · factura ${fact}`,monto:tot,metodo:'Transferencia',turno:null,usuario:me()});
+  i.serie='';toast(`✅ ${qty} medidor(es) EN BODEGA${i.egr&&tot?' · egreso '+fmt(tot)+' en Libro Diario':''}`);bRender();
+}
+/* ---- Salida / Despacho ---- */
+function resolveDest(){
+  const d=bv.d;
+  if(d.tipo==='solicitud'){const so=state.solicitudes.find(x=>x.id===d.sol&&x.estado==='pendiente');return so?{tipo:'solicitud',ref:so.id,txt:`Solicitud ${so.id} · ${so.nombre}`,acoId:null}:null}
+  if(d.tipo==='socio'){const s=findSocios(d.socio)[0];return s?{tipo:'socio',ref:s.num,acoId:nextAcoId(s.num),txt:`Socio #${s.num} · nueva acometida ${nextAcoId(s.num)}`}:null}
+  const a=acoMap[(d.aco||'').trim()];return a?{tipo:'reemplazo',ref:a.id,acoId:a.id,txt:`Reemplazo en acometida ${a.id} (medidor actual ${a.serie})`}:null;
+}
+function bDestInfo(){const el=$('#bdi');if(!el)return;const dst=resolveDest();el.innerHTML=dst?`<div class="bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl p-2.5 text-sm mb-3">✅ ${dst.txt}</div>`:`<div class="text-sm text-red-600 mb-3">${(bv.d.tipo==='socio'?bv.d.socio:bv.d.aco)?'No se encontró':''}</div>`}
+function bDespacho(){
+  const d=bv.d,st=stock(),sols=state.solicitudes.filter(s=>s.estado==='pendiente');
+  if(!d.serie||!medMap[d.serie]||medMap[d.serie].estado!=='bodega')d.serie=st[0]?st[0].serie:'';
+  if(!sols.find(s=>s.id===d.sol))d.sol=sols[0]?sols[0].id:'';
+  const dest=d.tipo==='solicitud'?(sols.length?`<select onchange="bv.d.sol=this.value" class="${IN}">${sols.map(s=>`<option value="${s.id}" ${d.sol===s.id?'selected':''}>${s.id} · ${s.nombre} · ${s.dir}</option>`).join('')}</select>`:'<div class="text-sm text-slate-500 mb-3">No hay solicitudes pendientes. Se crean al cobrar «Nueva acometida» en Otros cobros.</div>')
+   :`<input value="${esc(d.tipo==='socio'?d.socio:d.aco)}" oninput="bv.d.${d.tipo==='socio'?'socio':'aco'}=this.value;bDestInfo()" placeholder="${d.tipo==='socio'?'N° de socio o nombre (ej. 142)':'Acometida (ej. 142-1)'}" class="${IN} mb-1"><div id="bdi"></div>`;
+  const vs=state.despachos.slice().reverse().slice(0,10);
+  $('#btab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5"><section class="lg:col-span-2 bg-white rounded-2xl border p-5 h-fit"><h2 class="font-bold text-lg mb-1">🚚 Orden de salida / despacho</h2><p class="text-xs text-slate-500 mb-3">Autoriza la salida de un medidor EN BODEGA, lo asigna a un fontanero y lo pre-vincula a su destino. Pasa a <b>DESPACHADO A CAMPO</b>.</p>
+   <label class="${LB}">Medidor en bodega <span class="font-normal text-slate-500">(${st.length} disponibles)</span></label>
+   <select onchange="bv.d.serie=this.value" class="${IN}">${st.slice(0,40).map(m=>`<option value="${m.serie}" ${d.serie===m.serie?'selected':''}>${mLabel(m)}</option>`).join('')||'<option value="">— bodega vacía —</option>'}</select>
+   <label class="${LB}">Fontanero responsable</label><select onchange="bv.d.font=this.value" class="${IN}">${FONTANEROS.map(f=>`<option ${d.font===f?'selected':''}>${f}</option>`).join('')}</select>
+   <label class="${LB}">Pre-vincular a</label><div class="grid grid-cols-3 gap-1.5 mb-3 text-xs font-semibold">${[['solicitud','📝 Solicitud'],['socio','👤 Socio existente'],['reemplazo','🔧 Reemplazo']].map(([k2,l])=>`<button onclick="bv.d.tipo='${k2}';bDespacho()" class="py-2.5 rounded-lg ${d.tipo===k2?'bg-slate-900 text-white':'bg-slate-100'}">${l}</button>`).join('')}</div>${dest}
+   <div class="text-xs text-slate-500 mb-3">Autoriza: <b>${me()}</b></div>
+   <button onclick="bDespachoSave()" class="w-full py-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold">Autorizar salida y emitir vale</button></section>
+  <section class="lg:col-span-3 bg-white rounded-2xl border p-5"><h2 class="font-bold mb-3">Vales de salida emitidos</h2>${vs.map(v=>`<div class="border rounded-xl p-3 mb-2 ${v.estado==='anulado'?'opacity-50':''}"><div class="flex justify-between gap-2"><div><b>${v.id}</b> · <span class="mono">${v.serie}</span><div class="text-xs text-slate-500">${fechaFmt(v.fecha)} ${v.hora} · ${v.fontanero} · ${v.dest.txt}</div><div class="text-xs text-slate-500">Autorizó: ${v.autorizo}</div></div>
+   <div class="text-right shrink-0"><span class="px-2 py-1 rounded-full text-xs font-semibold ${v.estado==='activo'?'bg-amber-100 text-amber-800':v.estado==='confirmado'?'bg-emerald-100 text-emerald-800':'bg-slate-200 text-slate-600'}">${v.estado==='activo'?'Pendiente de instalar':v.estado==='confirmado'?'Instalación confirmada':'Anulado'}</span>
+   <div class="mt-1.5 flex gap-1 justify-end"><button onclick="valeModal('${v.id}')" class="px-2.5 py-1 rounded-lg bg-slate-100 text-xs font-semibold">Ver vale</button>${v.estado==='activo'?`<button onclick="bValeAnular('${v.id}')" class="px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold">Anular</button>`:''}</div></div></div></div>`).join('')||'<div class="text-slate-400 text-sm">Aún no hay vales.</div>'}</section></div>`;
+  bDestInfo();
+}
+function bDespachoSave(){
+  const d=bv.d,m=medMap[d.serie];if(!m||m.estado!=='bodega'){toast('⚠️ Seleccione un medidor EN BODEGA');return}
+  const dest=resolveDest();if(!dest){toast('⚠️ Indique el destino: solicitud, socio o acometida válidos');return}
+  const v=addVale(m.serie,d.font,dest,me(),HOY);v.hora=hora();
+  if(dest.tipo==='solicitud'){const so=state.solicitudes.find(x=>x.id===dest.ref);so.estado='despachada';so.serie=m.serie}
+  audit('Salida de bodega',`Vale ${v.id} · ${m.serie} → ${d.font} · ${dest.txt}`);
+  d.serie='';bRender();valeModal(v.id);
+}
+function bValeAnular(id){
+  const v=state.despachos.find(x=>x.id===id),m=medMap[v.serie];v.estado='anulado';m.estado='bodega';delete m.fontanero;delete m.dest;delete m.vale;
+  if(v.dest.tipo==='solicitud'){const so=state.solicitudes.find(x=>x.id===v.dest.ref);so.estado='pendiente';delete so.serie}
+  audit('Anuló vale de salida',`${v.id} · ${v.serie} regresa a bodega`,'alto');toast('Vale anulado · medidor devuelto a bodega');bRender();
+}
+function valeModal(id){
+  const v=state.despachos.find(x=>x.id===id)||{id:'V-0000',fecha:'2026-08-14',hora:'08:00',serie:'—',fontanero:'—',dest:{txt:'—'},autorizo:'—'},m=medMap[v.serie]||{},row=(l,r)=>`<div class="flex justify-between gap-2"><span>${l}</span><span class="text-right">${r}</span></div>`;
+  modal(`<div class="bg-slate-200 rounded-xl p-3 mb-4 max-h-[65vh] overflow-y-auto"><div class="ticket mono text-[13px] mx-auto" style="width:300px"><div class="text-center font-bold">AGUA VIVA · VALE DE SALIDA</div><div class="text-center text-[0.85em]">DE BODEGA N° ${v.id}</div><div class="dash"></div>
+   ${row('Fecha:',fechaFmt(v.fecha)+' '+v.hora)}${row('Medidor:',v.serie)}${row('Marca/Ø:',(m.marca||'')+' '+(m.diam||''))}${row('Factura/lote:',m.factura||'—')}<div class="dash"></div>
+   ${row('Entregado a:',v.fontanero)}<div class="text-[0.9em] mt-1">Destino: ${v.dest.txt}</div>${row('Autorizó:',v.autorizo.split(' (')[0])}<div class="dash"></div>
+   <div class="mt-8 flex justify-between text-center text-[0.8em]"><div>__________<br>Entrega</div><div>__________<br>Recibe</div></div></div></div>
+   <div class="flex gap-3"><button onclick="toast('🖨️ Vale enviado a impresora (simulado)')" class="flex-1 py-3 rounded-xl bg-slate-100 font-semibold">🖨️ Imprimir</button><button onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-sky-600 text-white font-bold">Cerrar</button></div>`);
+}
+
+/* ---- Lógica compartida (oficina y fontanero) ---- */
+function vincVale(serie,desc){const m=medMap[serie];let v=m.vale?state.despachos.find(x=>x.id===m.vale&&x.estado!=='anulado'):null;
+  if(!v){v=addVale(serie,'Oficina (instalación directa)',{tipo:'directo',txt:desc},me(),HOY);v.hora=hora()}return v}
+function doInstall(o){
+  const m=medMap[o.serie];let num=o.socioNum;
+  if(o.modo==='nuevo'){num=Math.max(...state.socios.map(s=>s.num))+1;addSocio(num,o.nombre,o.sector)}
+  const s=socioMap[num],id=o.modo==='nuevo'?num+'-1':(o.reservedId||nextAcoId(num)),v=vincVale(o.serie,'Instalación directa '+id);
+  addAco(num,+id.split('-')[1],s.nombre,s.sector,o.ubic,o.serie,0,true);
+  const a=acoMap[id];a.anterior=o.ini;a.nueva=true;a.reciente=true;
+  Object.assign(m,{lecturaInicio:o.ini,fechaInst:HOY,instalo:o.por,ubic:o.ubic});
+  v.estado='confirmado';v.confirmo=o.por;v.acoId=id;
+  if(o.sol){const so=state.solicitudes.find(x=>x.id===o.sol);so.estado='instalada';so.acoId=id;so.serie=o.serie}
+  audit('Alta de acometida',`${id} · ${s.nombre} · medidor ${o.serie} INSTALADO (lectura inicial ${o.ini}) · vale ${v.id} autorizado por ${v.autorizo}`);
+  return id;
+}
+function doBaja(acoId,ult,motivo){
+  const a=acoMap[acoId],m=medMap[a.serie];
+  m.estado='baja';m.bajaInfo={fecha:HOY,lectura:ult,motivo,aco:acoId};
+  a.pendReemplazo={serie:m.serie,corte:ult,motivo,fecha:HOY};a.sinMedidor=true;a.reciente=true;
+  state.reportes.filter(x=>x.aco===acoId&&x.estado==='pendiente').forEach(x=>x.estado='atendido');
+  audit('Baja de medidor',`Acom ${acoId} · ${m.serie} DADO DE BAJA · última lectura ${ult} m³ · ${motivo}`,'alto');
+}
+function doReplaceLink(acoId,serie,ini,por){
+  const a=acoMap[acoId],pr=a.pendReemplazo,m=medMap[serie],v=vincVale(serie,'Reemplazo en '+acoId);
+  Object.assign(m,{estado:'instalado',aco:acoId,lecturaInicio:ini,fechaInst:HOY,instalo:por});
+  v.estado='confirmado';v.confirmo=por;v.acoId=acoId;
+  a.carry=(a.carry||0)+Math.max(0,pr.corte-a.anterior);a.anterior=ini;a.serie=serie;a.sinMedidor=false;a.reciente=true;delete a.pendReemplazo;
+  state.cambios.push({aco:acoId,anterior:pr.serie,nuevo:serie,fecha:HOY,corte:pr.corte,inicio:ini,autorizo:v.autorizo,fontanero:v.fontanero,motivo:pr.motivo,vale:v.id});
+  audit('Reemplazo de medidor',`Acom ${acoId}: ${pr.serie} → ${serie} · corte ${pr.corte} / inicio ${ini} · ${pr.motivo} · recibos y mora conservados`);
+}
+/* ---- Flujo 2: vincular medidor nuevo (nueva acometida) ---- */
+function bNId(){const n=bv.n;if(n.modo==='nuevo')return Math.max(...state.socios.map(s=>s.num))+1+'-1';if(!n.socio)return null;const m=medMap[n.serie];return m&&m.dest&&m.dest.tipo==='socio'&&m.dest.ref===n.socio?m.dest.acoId:nextAcoId(n.socio)}
+function bNMeter(serie){const n=bv.n,m=medMap[serie];n.serie=serie;
+  if(m&&m.dest&&m.dest.tipo==='solicitud'){const so=state.solicitudes.find(x=>x.id===m.dest.ref);n.modo='nuevo';n.sol=so.id;n.nombre=so.nombre;n.sector=so.sector;n.ubic=so.dir}
+  else if(m&&m.dest&&m.dest.tipo==='socio'){n.modo='existente';n.socio=m.dest.ref;n.q=String(m.dest.ref)}
+  bNueva()}
+function bNSol(id){const n=bv.n,so=state.solicitudes.find(x=>x.id===id);n.sol=id;if(so){n.nombre=so.nombre;n.sector=so.sector;n.ubic=so.dir}bNueva()}
+function bNSearch(){const L=findSocios(bv.n.q);$('#bnres').innerHTML=L.map(s=>`<button onclick="bv.n.socio=${s.num};bv.n.q='${s.num}';bNueva()" class="w-full text-left p-2 border rounded-xl text-sm mb-1.5 hover:bg-slate-50">#${s.num} · ${s.nombre} <span class="text-xs text-slate-500">· ${acoBySocio[s.num].map(a=>a.id).join(', ')}</span></button>`).join('')}
+function bNueva(){
+  const n=bv.n,av2=state.medidores.filter(m=>m.estado==='bodega'||m.estado==='despachado').sort((a,b)=>(a.estado==='despachado'?0:1)-(b.estado==='despachado'?0:1));
+  if(!medMap[n.serie]||!['bodega','despachado'].includes(medMap[n.serie].estado))n.serie=av2[0]?av2[0].serie:'';
+  const sols=state.solicitudes.filter(s=>s.estado!=='instalada'),id=bNId(),s=n.socio?socioMap[n.socio]:null;
+  const socioBox=n.modo==='existente'?`<input value="${esc(n.q)}" oninput="bv.n.q=this.value;bNSearch()" placeholder="🔍 N° de socio o nombre" class="${IN} mb-2"><div id="bnres"></div>
+     ${s?`<div class="bg-emerald-50 border border-emerald-300 rounded-xl p-3 text-sm mb-3">✅ <b>#${s.num} · ${s.nombre}</b><div class="text-xs text-slate-600">Acometidas actuales: ${acoBySocio[s.num].map(a=>a.id).join(', ')}</div></div>`:''}`
+   :`<label class="${LB}">Solicitud pagada (opcional)</label><select onchange="bNSol(this.value)" class="${IN}"><option value="">— Alta manual (sin solicitud) —</option>${sols.map(x=>`<option value="${x.id}" ${n.sol===x.id?'selected':''}>${x.id} · ${x.nombre}</option>`).join('')}</select>
+     <label class="${LB}">Nombre del nuevo socio</label><input value="${esc(n.nombre)}" oninput="bv.n.nombre=this.value" class="${IN}"><label class="${LB}">Sector</label><select onchange="bv.n.sector=this.value" class="${IN}">${SECTORES.map(x=>`<option ${n.sector===x?'selected':''}>${x}</option>`).join('')}</select>`;
+  $('#btab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5"><section class="lg:col-span-3 bg-white rounded-2xl border p-5"><h2 class="font-bold text-lg mb-1">🚰 Vincular medidor nuevo a un cliente</h2><p class="text-xs text-slate-500 mb-4">El medidor pasa a <b>INSTALADO</b> y la acometida aparece de inmediato en la ruta del fontanero.</p>
+   <div class="font-semibold mb-2">1 · Socio</div><div class="grid grid-cols-2 gap-2 mb-3 text-sm font-semibold"><button onclick="bv.n.modo='existente';bNueva()" class="py-2.5 rounded-xl ${n.modo==='existente'?'bg-slate-900 text-white':'bg-slate-100'}">Socio existente</button><button onclick="bv.n.modo='nuevo';bNueva()" class="py-2.5 rounded-xl ${n.modo==='nuevo'?'bg-slate-900 text-white':'bg-slate-100'}">Socio nuevo</button></div>${socioBox}
+   <div class="bg-sky-50 border border-sky-200 rounded-xl p-3 mb-4 text-sm">ID de acometida generado: <b class="text-xl text-sky-800 mono">${id||'—'}</b>${n.modo==='existente'&&s&&id?`<span class="text-xs text-slate-500"> (el socio ya tiene ${acoBySocio[s.num].length})</span>`:''}</div>
+   <div class="font-semibold mb-2">2 · Medidor</div><select onchange="bNMeter(this.value)" class="${IN}">${av2.slice(0,40).map(m=>`<option value="${m.serie}" ${n.serie===m.serie?'selected':''}>${mLabel(m)} · ${m.estado==='bodega'?'EN BODEGA':'DESPACHADO ('+m.fontanero+')'}</option>`).join('')||'<option value="">— sin medidores disponibles —</option>'}</select>
+   <div class="grid grid-cols-2 gap-3"><div><label class="${LB}">Lectura inicial (m³)</label><input type="number" min="0" value="${esc(n.ini)}" oninput="bv.n.ini=this.value" class="${IN}"></div><div><label class="${LB}">Ubicación / referencia</label><input value="${esc(n.ubic)}" oninput="bv.n.ubic=this.value" placeholder="Casa esquina, portón azul" class="${IN}"></div></div>
+   ${fotoBtn('inst','Tomar foto de instalación')}<button onclick="bNSave()" class="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold">Guardar alta e instalar medidor</button></section>
+   <section class="lg:col-span-2 bg-white rounded-2xl border p-5 h-fit"><h2 class="font-bold mb-2">Últimas altas</h2>${state.acometidas.filter(a=>a.nueva).slice(-6).reverse().map(a=>`<div class="border rounded-xl p-2.5 mb-2 text-sm"><b>${a.id}</b> · ${a.nombre}<div class="text-xs text-slate-500">${a.serie} · lectura inicial ${a.anterior} · ${a.dir}</div></div>`).join('')||'<div class="text-xs text-slate-400">Aún no hay altas en esta sesión.</div>'}
+   <div class="text-xs text-slate-500 mt-3">El derecho de acometida se cobra en <b>Caja → Otros cobros</b> y genera la solicitud.</div></section></div>`;
+  if(n.modo==='existente')bNSearch();
+}
+function bNSave(){
+  const n=bv.n,m=medMap[n.serie],ini=parseInt(n.ini,10),ubic=esc(n.ubic.trim());
+  if(!m){toast('⚠️ Seleccione un medidor disponible');return}
+  if(n.modo==='existente'&&!n.socio){toast('⚠️ Seleccione el socio');return}
+  if(n.modo==='nuevo'&&!n.nombre.trim()){toast('⚠️ Indique el nombre del nuevo socio');return}
+  if(isNaN(ini)||ini<0){toast('⚠️ Lectura inicial inválida');return}
+  if(!ubic){toast('⚠️ Indique ubicación / referencia');return}
+  if(!bv.f.inst){toast('⚠️ Tome la foto de instalación');return}
+  const id=doInstall({serie:n.serie,modo:n.modo,socioNum:n.socio,sol:n.modo==='nuevo'?n.sol:null,nombre:esc(n.nombre.trim()),sector:n.sector,ini,ubic,por:me(),reservedId:n.modo==='existente'?bNId():null});
+  Object.assign(n,{socio:null,q:'',sol:'',nombre:'',serie:'',ini:'0',ubic:''});bv.f.inst=null;
+  toast(`✅ Acometida ${id} creada · medidor INSTALADO · ya aparece en la ruta del fontanero`);bRender();
+}
+/* ---- Flujo 3: reemplazo de medidor dañado ---- */
+function bRSearch(){
+  const q=bv.r.q.trim().toLowerCase().replace('#',''),L=q?state.acometidas.filter(a=>a.id.startsWith(q)||a.serie.toLowerCase().includes(q)||a.nombre.toLowerCase().includes(q)).slice(0,6):[];
+  $('#brres').innerHTML=L.map(a=>`<button onclick="bRPick('${a.id}')" class="w-full text-left p-2 border rounded-xl text-sm mb-1.5 hover:bg-slate-50"><b>${a.id}</b> · ${a.nombre} <span class="text-xs text-slate-500 mono">· ${a.serie}</span></button>`).join('')}
+function bRPick(id){Object.assign(bv.r,{aco:id,q:id,ult:'',rep:null,motivo:MOTIVOS[0]});bv.f.baja=null;bv.f.rep=null;bReemplazo()}
+function bReemplazo(){
+  const r=bv.r,a=r.aco?acoMap[r.aco]:null,reps=state.reportes.filter(x=>x.estado==='pendiente');
+  const left=`<section class="lg:col-span-2 bg-white rounded-2xl border p-5 h-fit"><h2 class="font-bold mb-2">Acometida a intervenir</h2>
+    <input value="${esc(r.q)}" oninput="bv.r.q=this.value;bRSearch()" placeholder="🔍 Acometida (142-1), serie o nombre" class="${IN} mb-2"><div id="brres"></div>
+    <h3 class="font-semibold text-sm mt-3 mb-2">🔔 Reportes de daño del fontanero (${reps.length})</h3>${reps.map(x=>`<button onclick="bAtender('${x.id}')" class="w-full text-left border rounded-xl p-2.5 mb-2 text-sm hover:bg-red-50"><b>Acom ${x.aco}</b> · ${x.serie}<div class="text-xs text-slate-500">${x.motivo} · ${x.por} · ${fechaFmt(x.fecha)}</div></button>`).join('')||'<div class="text-xs text-slate-400">Sin reportes pendientes.</div>'}</section>`;
+  if(!a){$('#btab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5">${left}<section class="lg:col-span-3 bg-white rounded-2xl border p-10 text-center text-slate-400">Busque una acometida activa (ej. <b>142-1</b>) o atienda un reporte de daño.</section></div>`;return}
+  const pr=a.pendReemplazo,m=medMap[a.serie],u=unpaidPrev(a.id),camb=state.cambios.filter(c=>c.aco===a.id).slice().reverse();
+  const cand=state.medidores.filter(x=>x.estado==='bodega'||x.estado==='despachado').sort((x,y)=>((y.dest&&y.dest.ref===a.id)?1:0)-((x.dest&&x.dest.ref===a.id)?1:0)||(x.estado==='despachado'?0:1)-(y.estado==='despachado'?0:1));
+  if(!medMap[r.serie]||!['bodega','despachado'].includes(medMap[r.serie].estado))r.serie=cand[0]?cand[0].serie:'';
+  const p1=pr?`<div class="bg-emerald-50 border border-emerald-300 rounded-xl p-3 text-sm">✅ <b>Paso 1 completado.</b> ${pr.serie} DADO DE BAJA · última lectura <b>${pr.corte} m³</b> · ${pr.motivo}</div>`
+   :`<div class="bg-slate-50 rounded-xl p-3 text-sm mb-3">Medidor actual: <b class="mono">${a.serie}</b> · ${m.marca} ${m.diam} · lectura anterior registrada <b>${a.anterior} m³</b></div>
+     <label class="${LB}">Última lectura alcanzada (m³)</label><input type="number" value="${esc(r.ult)}" oninput="bv.r.ult=this.value" class="${IN}">
+     <label class="${LB}">Motivo de baja</label><select onchange="bv.r.motivo=this.value" class="${IN}">${MOTIVOS.map(x=>`<option ${r.motivo===x?'selected':''}>${x}</option>`).join('')}</select>${fotoBtn('baja','Foto de evidencia del daño')}
+     <button onclick="bBajaSave()" class="w-full py-3.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold">⛔ Dar de baja ${a.serie}</button>`;
+  const p2=pr?`<label class="${LB}">Medidor de reemplazo <span class="font-normal text-slate-500">(bodega / despachados)</span></label><select onchange="bv.r.serie=this.value" class="${IN}">${cand.slice(0,40).map(x=>`<option value="${x.serie}" ${r.serie===x.serie?'selected':''}>${mLabel(x)} · ${x.estado==='bodega'?'EN BODEGA':'DESPACHADO ('+x.fontanero+')'}</option>`).join('')||'<option value="">— sin medidores —</option>'}</select>
+     <label class="${LB}">Lectura inicial (m³)</label><input type="number" min="0" value="${esc(r.ini)}" oninput="bv.r.ini=this.value" class="${IN}">${fotoBtn('rep','Foto del medidor instalado (opcional)')}
+     <button onclick="bReplaceSave()" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold">🔗 Activar medidor de reemplazo</button>`:`<div class="text-sm text-slate-400">Complete primero el Paso 1.</div>`;
+  $('#btab').innerHTML=`<div class="grid lg:grid-cols-5 gap-5">${left}<section class="lg:col-span-3 space-y-4"><div class="bg-white rounded-2xl border p-5"><div class="flex justify-between flex-wrap gap-2"><div><div class="text-xs text-slate-500">Acometida</div><div class="text-2xl font-extrabold">${a.id} · ${a.nombre}</div><div class="text-xs text-slate-500">${a.dir} · ${a.sector}</div></div><div class="text-right text-sm">${u.length?`<span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">${u.length} mes(es) de mora · ${fmt(sum(u.map(x=>x.monto)))}</span>`:'<span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Al día</span>'}<div class="text-xs text-slate-500 mt-1">Recibos y mora se conservan al cambiar el medidor</div></div></div></div>
+   <div class="bg-white rounded-2xl border p-5 ${pr?'':'border-red-300'}"><h3 class="font-bold mb-3">Paso 1 · Baja del medidor actual</h3>${p1}</div>
+   <div class="bg-white rounded-2xl border p-5 ${pr?'border-emerald-400':'opacity-60'}"><h3 class="font-bold mb-3">Paso 2 · Vinculación del medidor de reemplazo</h3>${p2}</div>
+   <div class="bg-white rounded-2xl border p-5"><h3 class="font-bold mb-2">Historial de medidores de ${a.id}</h3>${bCambiosTabla(camb,true)}</div></section></div>`;
+  bRSearch();
+}
+function bBajaSave(){
+  const r=bv.r,a=acoMap[r.aco],ult=parseInt(r.ult,10);
+  if(isNaN(ult)){toast('⚠️ Registre la última lectura alcanzada');return}
+  if(ult<a.anterior){toast('⚠️ La última lectura no puede ser menor que la anterior ('+a.anterior+')');return}
+  if(!bv.f.baja){toast('⚠️ Tome la foto de evidencia');return}
+  doBaja(a.id,ult,r.motivo);bv.f.baja=null;toast('⛔ Medidor dado de baja · continúe con el Paso 2');bRender();
+}
+function bReplaceSave(){
+  const r=bv.r,a=acoMap[r.aco],ini=parseInt(r.ini,10);
+  if(!medMap[r.serie]){toast('⚠️ Seleccione el medidor de reemplazo');return}
+  if(isNaN(ini)||ini<0){toast('⚠️ Lectura inicial inválida');return}
+  const old=a.pendReemplazo.serie;doReplaceLink(a.id,r.serie,ini,me());bv.f.rep=null;r.ini='0';
+  toast(`✅ ${a.id}: ${old} → ${r.serie} · recibos y mora conservados · ruta del fontanero actualizada`);bRender();
+}
+/* ---- Bitácora de cambios ---- */
+function bCambiosTabla(L,sm){return L.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-500 border-b"><th class="py-2">Fecha</th>${sm?'':'<th>Acometida</th>'}<th>Medidor anterior → nuevo</th><th>Lect. corte</th><th>Lect. inicio</th><th>Autorizó salida</th><th>Motivo</th></tr></thead><tbody>${L.map(c=>`<tr class="border-b last:border-0"><td class="py-2.5 whitespace-nowrap">${fechaFmt(c.fecha)}</td>${sm?'':`<td class="font-semibold">${c.aco}<div class="text-xs font-normal text-slate-500">${acoMap[c.aco]?acoMap[c.aco].nombre:''}</div></td>`}<td class="mono text-xs">${c.anterior} → <b>${c.nuevo}</b></td><td>${c.corte} m³</td><td>${c.inicio} m³</td><td class="text-xs">${c.autorizo.split(' (')[0]}<div class="text-slate-400">${c.vale} · ${c.fontanero}</div></td><td>${c.motivo}</td></tr>`).join('')}</tbody></table></div>`:'<div class="text-sm text-slate-400">Sin cambios de medidor registrados.</div>'}
+function bBitacora(){
+  $('#btab').innerHTML=`<section class="bg-white rounded-2xl border p-5"><div class="flex flex-wrap justify-between gap-2 mb-3"><h2 class="font-bold text-lg">Bitácora histórica de cambios de medidor</h2><input value="${esc(bv.bq)}" oninput="bv.bq=this.value;bBitList()" placeholder="🔍 Acometida o serie" class="border rounded-xl px-3 py-2 text-sm"></div><div id="bbit"></div></section>`;bBitList();
+}
+function bBitList(){const q=bv.bq.trim().toLowerCase();$('#bbit').innerHTML=bCambiosTabla(state.cambios.filter(c=>!q||c.aco.startsWith(q)||c.anterior.toLowerCase().includes(q)||c.nuevo.toLowerCase().includes(q)).slice().reverse(),false)}
+
+/* ---- Fontanero: instalaciones por confirmar y reporte de daño ---- */
+const FUSER='W. Pérez';
+const fHead=(sub,t,back)=>`<div class="bg-sky-600 text-white p-4 sticky top-0 z-10 flex items-center gap-3"><button onclick="${back}" class="bg-white/20 rounded-xl px-4 py-3 font-bold text-lg">←</button><div><div class="text-xs text-sky-100">${sub}</div><div class="text-xl font-bold">${t}</div></div></div>`;
+const fPend=()=>state.despachos.filter(v=>v.estado==='activo'&&v.fontanero===FUSER);
+function fBack(){fv.view='';fv.inst=null;renderFList()}
+function renderFInst(){
+  fv.view='inst';fv.inst=null;
+  $('#fbody').innerHTML=fHead('Mis despachos de bodega','Instalaciones por confirmar','fBack()')+`<div class="p-3 space-y-3">${fPend().map(v=>{const m=medMap[v.serie];return `<div class="bg-white rounded-2xl p-4 border border-slate-200"><div class="flex justify-between items-center"><b class="mono text-lg">${v.serie}</b><span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">Vale ${v.id}</span></div><div class="text-xs text-slate-500">${m.marca} ${m.diam} · autorizó ${v.autorizo.split(' (')[0]}</div><div class="text-sm mt-1">${v.dest.txt}</div><button onclick="fInstOpen('${v.id}')" class="mt-3 w-full py-3.5 rounded-xl bg-emerald-600 text-white font-bold">Confirmar instalación</button></div>`}).join('')||'<div class="text-center text-slate-400 py-10">No tiene instalaciones pendientes 🎉</div>'}</div>`;
+}
+function fInstOpen(id){const v=state.despachos.find(x=>x.id===id);fv.inst=id;fv.ini='0';fv.ubicI='';bv.f.finst=null;
+  if(v.dest.tipo==='solicitud')fv.ubicI=state.solicitudes.find(x=>x.id===v.dest.ref).dir;renderFInstForm()}
+function renderFInstForm(){
+  const v=state.despachos.find(x=>x.id===fv.inst),m=medMap[v.serie],rep=v.dest.tipo==='reemplazo',a=rep?acoMap[v.dest.acoId]:null,blocked=rep&&!a.pendReemplazo;
+  $('#fbody').innerHTML=fHead('Vale '+v.id,'Confirmar instalación','renderFInst()')+`<div class="p-4 space-y-4"><div class="bg-white rounded-2xl p-4 border text-sm"><div><b class="mono text-lg">${v.serie}</b> · ${m.marca} ${m.diam}</div><div class="text-slate-500">${v.dest.txt}</div></div>
+   ${blocked?`<div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-4 text-sm font-semibold">⏳ La oficina aún no registró la baja del medidor anterior de ${a.id}. Espere a que se complete el Paso 1.</div>`
+   :`${rep?`<div class="bg-slate-100 rounded-2xl p-3 text-sm">Medidor retirado: <b class="mono">${a.pendReemplazo.serie}</b> · última lectura ${a.pendReemplazo.corte} m³ · ${a.pendReemplazo.motivo}</div>`:`<div><label class="text-sm font-semibold">Ubicación / referencia</label><input value="${esc(fv.ubicI)}" oninput="fv.ubicI=this.value" class="w-full border rounded-xl px-3 py-3 mt-1" placeholder="Casa esquina, portón azul"></div>`}
+   <div><label class="text-sm font-semibold">Lectura inicial del medidor (m³)</label><input type="number" min="0" value="${fv.ini}" oninput="fv.ini=this.value" class="w-full border-2 border-sky-400 rounded-xl px-3 py-3 mt-1 text-2xl font-bold mono"></div>
+   ${fotoBtn('finst','Tomar foto de instalación')}<button onclick="fInstConfirm()" class="w-full py-5 rounded-2xl text-lg font-bold text-white bg-emerald-600 active:bg-emerald-700 shadow">✅ Confirmar instalación</button>`}</div>`;
+}
+function fInstConfirm(){
+  const v=state.despachos.find(x=>x.id===fv.inst),rep=v.dest.tipo==='reemplazo',ini=parseInt(fv.ini,10);let msg;
+  if(isNaN(ini)||ini<0){toast('⚠️ Lectura inicial inválida');return}
+  if(!bv.f.finst){toast('⚠️ Tome la foto de instalación');return}
+  if(rep){doReplaceLink(v.dest.acoId,v.serie,ini,USERS.fontanero);msg=`✅ ${v.serie} instalado en ${v.dest.acoId}`}
+  else{if(!fv.ubicI.trim()){toast('⚠️ Indique ubicación / referencia');return}
+    let o;if(v.dest.tipo==='solicitud'){const so=state.solicitudes.find(x=>x.id===v.dest.ref);o={modo:'nuevo',nombre:so.nombre,sector:so.sector,sol:so.id}}else o={modo:'existente',socioNum:v.dest.ref,reservedId:v.dest.acoId};
+    msg=`✅ Acometida ${doInstall({...o,serie:v.serie,ini,ubic:esc(fv.ubicI.trim()),por:USERS.fontanero})} instalada`}
+  bv.f.finst=null;toast(msg+' · ya está en su ruta');renderFInst();
+}
+function fDanoModal(){const a=acoMap[fv.sel];bv.f.dano=null;
+  modal(`<h3 class="text-xl font-bold mb-1">⚠️ Reportar medidor dañado</h3><div class="text-sm text-slate-500 mb-3">Acom ${a.id} · <span class="mono">${a.serie}</span></div>
+   <label class="text-sm font-semibold">Motivo</label><select id="dmot" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${MOTIVOS.map(x=>`<option>${x}</option>`).join('')}</select>
+   <label class="text-sm font-semibold">Lectura observada (opcional)</label><input id="dlec" type="number" class="w-full border rounded-xl px-3 py-3 mt-1 mb-3">${fotoBtn('dano','Foto del daño')}
+   <div class="flex gap-3"><button onclick="closeModal()" class="flex-1 py-3.5 rounded-xl bg-slate-100 font-semibold">Cancelar</button><button onclick="fDanoSave()" class="flex-1 py-3.5 rounded-xl bg-red-600 text-white font-bold">Enviar reporte</button></div>`);
+}
+function fDanoSave(){
+  const a=acoMap[fv.sel];
+  if(state.reportes.find(x=>x.aco===a.id&&x.estado==='pendiente')){toast('Ya existe un reporte pendiente para '+a.id);closeModal();return}
+  if(!bv.f.dano){toast('⚠️ Tome la foto del daño');return}
+  const r={id:'R-'+String(++state.seq.rep).padStart(4,'0'),aco:a.id,serie:a.serie,motivo:$('#dmot').value,lectura:$('#dlec').value,fecha:HOY,hora:hora(),por:FUSER,estado:'pendiente'};
+  state.reportes.push(r);audit('Reporte de daño',`${r.id} · Acom ${a.id} · ${a.serie} · ${r.motivo}`);
+  bv.f.dano=null;closeModal();toast('📨 Reporte enviado a oficina (Bodega → Reemplazo de medidor)');
+}
 
 /* ============================ INICIO ============================ */
 renderNav();renderView();
